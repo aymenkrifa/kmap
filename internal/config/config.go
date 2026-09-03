@@ -27,35 +27,35 @@ type Config struct {
 }
 
 type Defaults struct {
-	Environment string   `yaml:"environment"`
-	Aliases     []string `yaml:"aliases"`
-	Selector    string   `yaml:"selector"`
+	Environment string   `yaml:"environment,omitempty"`
+	Aliases     []string `yaml:"aliases,omitempty"`
+	Selector    string   `yaml:"selector,omitempty"`
 }
 
 // Environment is reached either by running Command, or by running kubectl with
 // Context. Exactly one must be set; validation enforces that.
 type Environment struct {
-	Command   []string `yaml:"command"`
-	Context   string   `yaml:"context"`
-	Namespace string   `yaml:"namespace"`
-	Protected bool     `yaml:"protected"`
+	Command   []string `yaml:"command,omitempty"`
+	Context   string   `yaml:"context,omitempty"`
+	Namespace string   `yaml:"namespace,omitempty"`
+	Protected bool     `yaml:"protected,omitempty"`
 }
 
 // Alias is either a single Mapping used everywhere (All), or one Mapping per
 // environment (Envs). Exactly one field is non-nil.
 type Alias struct {
-	All  *Mapping
-	Envs map[string]*Mapping
+	All  *Mapping            `yaml:"-"`
+	Envs map[string]*Mapping `yaml:"-"`
 
-	Line int // line of the alias key, for error messages
+	Line int `yaml:"-"` // line of the alias key, for error messages
 }
 
 // Mapping names a workload, and optionally where and how to find its pods.
 type Mapping struct {
-	Workload  string   `yaml:"workload"`
-	Workloads []string `yaml:"workloads"`
-	Namespace string   `yaml:"namespace"`
-	Selector  string   `yaml:"selector"`
+	Workload  string   `yaml:"workload,omitempty"`
+	Workloads []string `yaml:"workloads,omitempty"`
+	Namespace string   `yaml:"namespace,omitempty"`
+	Selector  string   `yaml:"selector,omitempty"`
 
 	Line int `yaml:"-"`
 }
@@ -97,9 +97,34 @@ func (a *Alias) UnmarshalYAML(n *yaml.Node) error {
 	return n.Decode(&a.Envs)
 }
 
+// MarshalYAML writes back the compact form this mapping was probably written
+// in: a bare name, or name@namespace, whenever nothing else is set.
+func (m Mapping) MarshalYAML() (any, error) {
+	if len(m.Workloads) == 0 && m.Selector == "" {
+		if m.Namespace != "" {
+			return m.Workload + "@" + m.Namespace, nil
+		}
+		return m.Workload, nil
+	}
+	type raw Mapping // avoid recursing into this method
+	return raw(m), nil
+}
+
+// MarshalYAML writes the alias back in config grammar rather than dumping the
+// All/Envs split, so `kmap config show` output can be fed straight back in.
+func (a Alias) MarshalYAML() (any, error) {
+	if a.All != nil {
+		return a.All, nil
+	}
+	return a.Envs, nil
+}
+
 // WorkloadList returns every workload named by this mapping, always at least one
 // entry unless the mapping is empty.
 func (m *Mapping) WorkloadList() []string {
+	if m == nil {
+		return nil
+	}
 	if len(m.Workloads) > 0 {
 		return m.Workloads
 	}

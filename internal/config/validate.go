@@ -85,13 +85,14 @@ func (c *Config) Validate() error {
 			add(al.Line, "alias %q defines no mapping", name)
 			continue
 		}
-		check := func(envName string, m *Mapping) {
+		// m is nil when the file says `local:` with nothing after it.
+		check := func(envName string, m *Mapping, line int) {
 			if len(m.WorkloadList()) == 0 {
-				add(m.Line, "alias %q has no workload for %s", name, envName)
+				add(line, "alias %q has no workload for %s", name, envName)
 			}
 		}
 		if al.All != nil {
-			check("every environment", al.All)
+			check("every environment", al.All, al.All.Line)
 		}
 		envNames := make([]string, 0, len(al.Envs))
 		for e := range al.Envs {
@@ -99,11 +100,16 @@ func (c *Config) Validate() error {
 		}
 		sort.Strings(envNames)
 		for _, e := range envNames {
+			m := al.Envs[e]
+			line := al.Line
+			if m != nil {
+				line = m.Line
+			}
 			if _, ok := c.Environments[e]; !ok {
-				add(al.Envs[e].Line, "alias %q maps environment %q, which is not defined", name, e)
+				add(line, "alias %q maps environment %q, which is not defined", name, e)
 				continue
 			}
-			check(e, al.Envs[e])
+			check(e, m, line)
 		}
 	}
 
