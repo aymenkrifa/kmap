@@ -1,0 +1,5 @@
+kmap
+dist/
+*.test
+docs/superpowers/
+.superpowers/
