@@ -52,6 +52,10 @@ func TestTableAlignsAroundANSI(t *testing.T) {
 }
 
 func TestVisibleLenIgnoresHyperlinksAndColour(t *testing.T) {
+	saved := Hyperlinks
+	Hyperlinks = true // measure the escaped form, whatever stdout is here
+	defer func() { Hyperlinks = saved }()
+
 	cases := []struct {
 		in   string
 		want int
@@ -70,6 +74,10 @@ func TestVisibleLenIgnoresHyperlinksAndColour(t *testing.T) {
 }
 
 func TestTableAlignsAroundHyperlinks(t *testing.T) {
+	saved := Hyperlinks
+	Hyperlinks = true
+	defer func() { Hyperlinks = saved }()
+
 	tb := NewTable("ALIAS", "URL", "AGE")
 	tb.AddRow("api", Link("https://api.example.com/", "api.example.com"), "29h")
 	tb.AddRow("web", "cdn-next.example.com", "1h")
@@ -91,5 +99,29 @@ func TestTableAlignsAroundHyperlinks(t *testing.T) {
 		} else if got != want {
 			t.Errorf("line %d starts its last column at %d, want %d: %q", i, got, want, l)
 		}
+	}
+}
+
+func TestLinkFallsBackToPlainURLOffTerminal(t *testing.T) {
+	saved := Hyperlinks
+	defer func() { Hyperlinks = saved }()
+
+	Hyperlinks = true
+	got := Link("https://api.example.com/", "api.example.com")
+	if !strings.HasPrefix(got, "\x1b]8;;https://api.example.com/") {
+		t.Errorf("on a terminal, want an OSC 8 link, got %q", got)
+	}
+	if visibleLen(got) != len("api.example.com") {
+		t.Errorf("a link should print only its text, got width %d", visibleLen(got))
+	}
+
+	// piped: escape codes would be noise, and the full URL is what you grep for
+	Hyperlinks = false
+	got = Link("https://api.example.com/", "api.example.com")
+	if got != "https://api.example.com/" {
+		t.Errorf("off a terminal, want the plain URL, got %q", got)
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("piped output must carry no escapes: %q", got)
 	}
 }

@@ -93,11 +93,16 @@ func visibleLen(s string) int {
 	return n
 }
 
-// Link renders text as an OSC 8 terminal hyperlink. Terminals that do not
-// understand it simply show the text, so this is safe everywhere.
+// Link renders text as an OSC 8 terminal hyperlink, so the cell stays narrow
+// while the whole URL is what gets opened. When stdout is not a terminal the
+// escape codes would just be noise in a pipe, so the plain URL is emitted
+// instead — that is the form worth grepping for anyway.
 func Link(url, text string) string {
 	if url == "" {
 		return text
+	}
+	if !Hyperlinks {
+		return url
 	}
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }

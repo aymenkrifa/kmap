@@ -134,8 +134,10 @@ var columns = map[string]column{
 
 // DefaultColumns is what pods shows when neither config nor --columns says
 // otherwise. reason earns its default slot because a pod stuck in an init
-// container otherwise reads as a bare "Pending".
-var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age"}
+// container otherwise reads as a bare "Pending"; url earns its own because the
+// hostnames are not derivable from workload names. url costs one `get ingress`
+// per namespace — drop it from defaults.columns if that is not worth it.
+var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age", "url"}
 
 // resolveColumns turns names into columns, reporting an unknown name with the
 // full list rather than silently dropping it.

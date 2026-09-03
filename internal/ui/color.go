@@ -22,5 +22,18 @@ var palette = []string{
 // Color returns a stable colour for index i.
 func Color(i int) string { return palette[i%len(palette)] }
 
+// Hyperlinks reports whether output can carry OSC 8 terminal hyperlinks. It is
+// false when stdout is redirected, so a piped or captured run emits plain URLs
+// that grep and copy-paste can use, and false under NO_COLOR.
+var Hyperlinks = stdoutIsTerminal()
+
+func stdoutIsTerminal() bool {
+	if NoColor() {
+		return false
+	}
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
 // NoColor reports whether colour should be suppressed.
 func NoColor() bool { return os.Getenv("NO_COLOR") != "" }

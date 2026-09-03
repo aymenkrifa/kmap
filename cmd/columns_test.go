@@ -12,8 +12,10 @@ func TestResolveColumnsDefaultsAndErrors(t *testing.T) {
 	if err != nil || len(cols) != len(DefaultColumns) {
 		t.Fatalf("defaults: %v %v", cols, err)
 	}
-	if needs&needsMetrics != 0 || needs&needsIngress != 0 {
-		t.Errorf("the default columns must not cost extra calls, got needs=%b", needs)
+	// url is a default, so the ingress list is expected; metrics never are, and
+	// the deployment list is fetched lazily only to explain an empty row.
+	if needs&needsMetrics != 0 {
+		t.Errorf("the default columns must not pull metrics, got needs=%b", needs)
 	}
 
 	if _, _, err := resolveColumns([]string{"alias", "nope"}); err == nil ||
@@ -156,5 +158,18 @@ func TestPodsSkipsDeploymentCallWhenNothingIsAbsent(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "scaled to 0") {
 		t.Errorf("an empty row should be explained:\n%s", out.String())
+	}
+}
+
+func TestUrlIsADefaultColumn(t *testing.T) {
+	_, needs, err := resolveColumns(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs&needsIngress == 0 {
+		t.Error("url is meant to be a default column, so defaults should need the ingress list")
+	}
+	if needs&needsMetrics != 0 {
+		t.Error("defaults must not pull metrics; cpu/mem stay opt-in")
 	}
 }
