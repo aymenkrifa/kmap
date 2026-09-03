@@ -161,23 +161,28 @@ func TestPodsSkipsDeploymentCallWhenNothingIsAbsent(t *testing.T) {
 	}
 }
 
-// url and docs are opt-in: a plain `kmap pods` should cost one call per
-// namespace, plus the deployment list only when a row needs explaining.
-func TestDefaultColumnsCostNoExtraLookups(t *testing.T) {
+// docs is a default; url is not, and metrics never are.
+func TestDefaultColumns(t *testing.T) {
 	_, needs, err := resolveColumns(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if needs&needsIngress != 0 {
-		t.Error("defaults must not pull the ingress list; url and docs are opt-in")
-	}
 	if needs&needsMetrics != 0 {
 		t.Error("defaults must not pull metrics; cpu/mem are opt-in")
 	}
+	if needs&needsIngress == 0 {
+		t.Error("docs is a default column, so defaults need the ingress list")
+	}
+	var hasDocs, hasURL bool
 	for _, name := range DefaultColumns {
-		if name == "url" || name == "docs" {
-			t.Errorf("%q should not be a default column", name)
-		}
+		hasDocs = hasDocs || name == "docs"
+		hasURL = hasURL || name == "url"
+	}
+	if !hasDocs {
+		t.Error("docs should be a default column")
+	}
+	if hasURL {
+		t.Error("url should stay opt-in")
 	}
 }
 

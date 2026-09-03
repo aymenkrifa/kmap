@@ -141,10 +141,10 @@ var columns = map[string]column{
 
 // DefaultColumns is what pods shows when neither config nor --columns says
 // otherwise. reason earns its default slot because a pod stuck in an init
-// container otherwise reads as a bare "Pending". url and docs are opt-in: each
-// costs one `get ingress` per namespace, and neither is what you look at a
-// status table for.
-var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age"}
+// container otherwise reads as a bare "Pending", and docs because the whole
+// point of recording those paths is not having to remember them. docs costs one
+// `get ingress` per namespace; url stays opt-in since it shows the same origin.
+var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age", "docs"}
 
 // docsURL builds the documentation URL for a target: the service's ingress
 // origin with its configured docs path hung off it. Empty when the alias has no
