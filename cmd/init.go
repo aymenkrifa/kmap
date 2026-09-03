@@ -112,7 +112,8 @@ func runInit(kubeconfigPath, outPath string, force bool) error {
 	sb.WriteString("version: 1\n\n")
 	sb.WriteString("defaults:\n")
 	fmt.Fprintf(&sb, "  environment: %s\n", kc.defaultEnvironment())
-	sb.WriteString("  selector: \"app={{.Workload}}\"\n\n")
+	sb.WriteString("  selector: \"app={{.Workload}}\"\n")
+	fmt.Fprintf(&sb, "  columns: [%s]\n\n", strings.Join(DefaultColumns, ", "))
 	sb.WriteString("environments:\n")
 	for _, c := range kc.Contexts {
 		fmt.Fprintf(&sb, "  %s:\n    context: %s\n", c.Name, c.Name)

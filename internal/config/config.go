@@ -30,6 +30,7 @@ type Defaults struct {
 	Environment string   `yaml:"environment,omitempty"`
 	Aliases     []string `yaml:"aliases,omitempty"`
 	Selector    string   `yaml:"selector,omitempty"`
+	Columns     []string `yaml:"columns,omitempty"`
 }
 
 // Environment is reached either by running Command, or by running kubectl with

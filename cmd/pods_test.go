@@ -47,7 +47,7 @@ func TestPodsBatchesOneCallPerNamespace(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{"get pods": twoPods}}
 
 	var out bytes.Buffer
-	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api", "worker"}, nil); err != nil {
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api", "worker"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestPodsRendersRowPerAlias(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{"get pods": twoPods}}
 
 	var out bytes.Buffer
-	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api", "worker"}, nil); err != nil {
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api", "worker"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	s := out.String()
@@ -84,7 +84,7 @@ func TestPodsShowsDashForAbsentWorkload(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{"get pods": `{"items":[]}`}}
 
 	var out bytes.Buffer
-	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, nil); err != nil {
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "—") {
@@ -97,7 +97,7 @@ func TestPodsPassesThroughFlags(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{"get pods": twoPods}}
 
 	var out bytes.Buffer
-	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, []string{"--show-labels"}); err != nil {
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, []string{"--show-labels"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	found := false
@@ -141,7 +141,7 @@ func TestPodsDropsOutputFlagAndSaysSo(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{"get pods": twoPods}}
 
 	var out bytes.Buffer
-	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, []string{"-o", "wide"}); err != nil {
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, []string{"-o", "wide"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	argv := strings.Join(f.calls[0], " ")

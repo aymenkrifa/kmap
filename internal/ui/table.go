@@ -49,22 +49,57 @@ func writeRow(w io.Writer, cells []string, widths []int) {
 	fmt.Fprintln(w, strings.TrimRight(b.String(), " "))
 }
 
-// visibleLen ignores ANSI escape sequences when measuring width.
+// visibleLen measures how wide a cell prints, ignoring escape sequences. It
+// handles both CSI colour codes (ESC [ ... m) and OSC 8 hyperlinks
+// (ESC ] 8 ; ; uri ST), whose URI is not displayed at all.
 func visibleLen(s string) int {
-	n, inEsc := 0, false
-	for _, r := range s {
-		switch {
-		case inEsc:
-			if r == 'm' {
-				inEsc = false
+	n := 0
+	for i := 0; i < len(s); {
+		if s[i] != 0x1b {
+			if s[i]&0xC0 != 0x80 { // count runes, not continuation bytes
+				n++
 			}
-		case r == '\x1b':
-			inEsc = true
+			i++
+			continue
+		}
+		i++
+		if i >= len(s) {
+			break
+		}
+		switch s[i] {
+		case '[': // CSI: runs to the first byte in @-~
+			i++
+			for i < len(s) && (s[i] < '@' || s[i] > '~') {
+				i++
+			}
+			i++
+		case ']': // OSC: runs to BEL or ST (ESC \)
+			i++
+			for i < len(s) {
+				if s[i] == 0x07 {
+					i++
+					break
+				}
+				if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+					i += 2
+					break
+				}
+				i++
+			}
 		default:
-			n++
+			i++
 		}
 	}
 	return n
+}
+
+// Link renders text as an OSC 8 terminal hyperlink. Terminals that do not
+// understand it simply show the text, so this is safe everywhere.
+func Link(url, text string) string {
+	if url == "" {
+		return text
+	}
+	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
 // ClearLines emits the escape sequence to move up n lines and clear them, for

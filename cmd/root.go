@@ -93,6 +93,7 @@ func splitArgs(args []string) (aliases, passthrough []string) {
 type selfFlags struct {
 	bools map[string]*bool
 	ints  map[string]*int
+	strs  map[string]*string
 }
 
 // parse pulls the declared flags out of args wherever they appear and returns
@@ -135,6 +136,14 @@ func (s selfFlags) parse(args []string) (rest []string, help bool, err error) {
 				return nil, help, fmt.Errorf("%s %q: want a positive number", name, v)
 			}
 			*p = n
+			continue
+		}
+		if p, ok := s.strs[name]; ok {
+			v, err := takeValue()
+			if err != nil {
+				return nil, help, err
+			}
+			*p = v
 			continue
 		}
 		if name == "--config" {

@@ -50,3 +50,46 @@ func TestTableAlignsAroundANSI(t *testing.T) {
 		t.Errorf("coloured row's status starts at visible column %d, want %d", got, col)
 	}
 }
+
+func TestVisibleLenIgnoresHyperlinksAndColour(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"plain", 5},
+		{Green + "Running" + Reset, 7},
+		{Link("https://api.example.com/", "api.example.com"), 15},
+		{Green + Link("https://x/", "abc") + Reset, 3},
+		{"—", 1},
+	}
+	for _, c := range cases {
+		if got := visibleLen(c.in); got != c.want {
+			t.Errorf("visibleLen(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestTableAlignsAroundHyperlinks(t *testing.T) {
+	tb := NewTable("ALIAS", "URL", "AGE")
+	tb.AddRow("api", Link("https://api.example.com/", "api.example.com"), "29h")
+	tb.AddRow("web", "cdn-next.example.com", "1h")
+	var out bytes.Buffer
+	tb.Render(&out)
+
+	// AGE must start at the same visible column on every line, even though the
+	// hyperlinked row carries a URL that prints as nothing.
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	want := -1
+	for i, l := range lines {
+		idx := strings.LastIndex(l, "  ")
+		if idx < 0 {
+			t.Fatalf("line %d has no column gap: %q", i, l)
+		}
+		got := visibleLen(l[:idx+2])
+		if want == -1 {
+			want = got
+		} else if got != want {
+			t.Errorf("line %d starts its last column at %d, want %d: %q", i, got, want, l)
+		}
+	}
+}

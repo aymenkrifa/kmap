@@ -35,8 +35,12 @@ forward a flag kmap also defines.
   kmap pods prod api worker       two aliases in prod
   kmap pods prod api -l tier=web  -l is forwarded to kubectl
   kmap pods -w                    refresh in place
-  kmap pods staging api -f 5      refresh every 5 seconds`,
-		// kmap's own flags may trail the aliases (`pods api -f 5`) while unknown
+  kmap pods staging api -f 5      refresh every 5 seconds
+  kmap pods --columns alias,url   choose the columns
+
+Columns: ` + strings.Join(columnNames(), ", ") + `.
+Set a lasting default with defaults.columns in your config.`,
+		// kmap's own flags may trail the aliases (` + "`pods api -f 5`" + `) while unknown
 		// flags must reach kubectl verbatim (`pods api -l app=x`). Cobra cannot do
 		// both, so pods parses its own flags and treats the remainder as opaque.
 		DisableFlagParsing: true,
@@ -60,11 +64,15 @@ forward a flag kmap also defines.
 			if len(aliases) == 0 {
 				aliases = cfg.Defaults.Aliases
 			}
+			cols := cfg.Defaults.Columns
+			if opts.columns != "" {
+				cols = strings.Split(opts.columns, ",")
+			}
 			out := cmd.OutOrStdout()
 			if !opts.watch {
-				return runPods(cmd.Context(), cfg, runner, out, env, aliases, passthrough)
+				return runPods(cmd.Context(), cfg, runner, out, env, aliases, passthrough, cols)
 			}
-			return watchPods(cmd.Context(), cfg, runner, out, env, aliases, passthrough, opts.interval)
+			return watchPods(cmd.Context(), cfg, runner, out, env, aliases, passthrough, cols, opts.interval)
 		},
 	}
 	// Registered so they appear in --help and completion, though parsePodsFlags
@@ -72,6 +80,7 @@ forward a flag kmap also defines.
 	c.Flags().BoolP("watch", "w", false, "refresh in place until interrupted")
 	c.Flags().BoolP("follow", "f", false, "synonym for --watch")
 	c.Flags().Int("interval", 2, "seconds between refreshes")
+	c.Flags().String("columns", "", "comma-separated columns (default: defaults.columns, else a built-in set)")
 	return c
 }
 
@@ -79,6 +88,7 @@ forward a flag kmap also defines.
 type podsOpts struct {
 	watch    bool
 	interval int
+	columns  string
 	help     bool
 }
 
@@ -91,6 +101,7 @@ func parsePodsFlags(args []string) (podsOpts, []string, error) {
 			"-f": &opts.watch, "--follow": &opts.watch,
 		},
 		ints: map[string]*int{"--interval": &opts.interval},
+		strs: map[string]*string{"--columns": &opts.columns},
 	}.parse(args)
 	opts.help = help
 	return opts, rest, err
@@ -136,29 +147,13 @@ func stripOutputFlag(args []string) ([]string, bool) {
 	return out, dropped
 }
 
-// podItem is the minimal shape kmap reads from one entry of `get pods -o json`.
-type podItem struct {
-	Metadata struct {
-		Name              string            `json:"name"`
-		Labels            map[string]string `json:"labels"`
-		CreationTimestamp time.Time         `json:"creationTimestamp"`
-	} `json:"metadata"`
-	Status struct {
-		Phase             string `json:"phase"`
-		ContainerStatuses []struct {
-			Ready        bool `json:"ready"`
-			RestartCount int  `json:"restartCount"`
-		} `json:"containerStatuses"`
-	} `json:"status"`
-}
-
-type podJSON struct {
-	Items []podItem `json:"items"`
-}
-
 func runPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer,
-	env string, aliases, passthrough []string) error {
+	env string, aliases, passthrough, colNames []string) error {
 
+	cols, needs, err := resolveColumns(colNames)
+	if err != nil {
+		return err
+	}
 	targets, err := registry.ResolveAll(cfg, aliases, env)
 	if err != nil {
 		return err
@@ -181,8 +176,10 @@ func runPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer
 	}
 	sort.Strings(namespaces)
 
-	pods := map[string]podJSON{}
 	envDef := cfg.Environments[env]
+	er := envRunner{argv: func(args ...string) []string { return kube.Argv(envDef, args...) }}
+
+	pods := map[string]podJSON{}
 	for _, ns := range namespaces {
 		args := append([]string{"get", "pods", "-n", ns, "-o", "json"}, passthrough...)
 		var buf bytes.Buffer
@@ -196,35 +193,68 @@ func runPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer
 		pods[ns] = p
 	}
 
+	// Match first, so the deployment list is only fetched for namespaces that
+	// actually have an unexplained empty row.
+	matched := make([][]podItem, len(targets))
+	absentIn := map[string]bool{}
+	for i, t := range targets {
+		matched[i] = matchPods(pods[t.Namespace], t.Selector)
+		if len(matched[i]) == 0 {
+			absentIn[t.Namespace] = true
+		}
+	}
+
+	extra := map[string]*nsData{}
+	for _, ns := range namespaces {
+		want := needs
+		if !absentIn[ns] {
+			want &^= needsDeploys // nothing to explain here
+		}
+		d, err := fetchNSData(ctx, r, er, ns, want)
+		if err != nil {
+			return err
+		}
+		extra[ns] = d
+	}
+
 	header := fmt.Sprintf("%s%s%s — %d alias(es)", ui.Bold, env, ui.Reset, len(targets))
 	if envDef.Protected {
 		header += " " + ui.Red + "[protected]" + ui.Reset
 	}
 	fmt.Fprintf(w, "%s  %s%s%s\n\n", header, ui.Gray, time.Now().Format("15:04:05"), ui.Reset)
 
-	tb := ui.NewTable("ALIAS", "WORKLOAD", "READY", "STATUS", "RESTARTS", "AGE")
-	for _, t := range targets {
-		matched := matchPods(pods[t.Namespace], t.Selector)
-		if len(matched) == 0 {
-			tb.AddRow(t.Alias, strings.Join(t.Workloads, ","), "—", ui.Gray+"absent"+ui.Reset, "—", "—")
+	heads := make([]string, len(cols))
+	for i, c := range cols {
+		heads[i] = c.header
+	}
+	tb := ui.NewTable(heads...)
+
+	addRow := func(c cell) {
+		cells := make([]string, len(cols))
+		for i, col := range cols {
+			cells[i] = col.render(c)
+		}
+		tb.AddRow(cells...)
+	}
+
+	for i, t := range targets {
+		base := cell{target: t, ns: extra[t.Namespace]}
+		if len(matched[i]) == 0 {
+			addRow(base)
 			continue
 		}
-		for _, p := range matched {
-			ready, total, restarts := 0, len(p.Status.ContainerStatuses), 0
+		for _, p := range matched[i] {
+			c := base
+			p := p
+			c.pod = &p
+			c.total = len(p.Status.ContainerStatuses)
 			for _, cs := range p.Status.ContainerStatuses {
 				if cs.Ready {
-					ready++
+					c.ready++
 				}
-				restarts += cs.RestartCount
+				c.restarts += cs.RestartCount
 			}
-			tb.AddRow(
-				t.Alias,
-				strings.Join(t.Workloads, ","),
-				fmt.Sprintf("%d/%d", ready, total),
-				colorPhase(p.Status.Phase, ready, total),
-				fmt.Sprint(restarts),
-				age(p.Metadata.CreationTimestamp),
-			)
+			addRow(c)
 		}
 	}
 	tb.Render(w)
@@ -289,11 +319,11 @@ func age(t time.Time) string {
 }
 
 func watchPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer,
-	env string, aliases, passthrough []string, interval int) error {
+	env string, aliases, passthrough, cols []string, interval int) error {
 
 	for {
 		var buf bytes.Buffer
-		if err := runPods(ctx, cfg, r, &buf, env, aliases, passthrough); err != nil {
+		if err := runPods(ctx, cfg, r, &buf, env, aliases, passthrough, cols); err != nil {
 			return err
 		}
 		fmt.Fprint(w, buf.String())
