@@ -66,8 +66,11 @@ func (c *Config) Validate() error {
 			add(0, "defaults.environment %q is not a defined environment (have: %s)",
 				e, strings.Join(c.EnvNames(), ", "))
 		}
-	} else {
-		add(0, "defaults.environment is unset and there is more than one environment")
+	} else if len(c.Environments) > 1 {
+		// Load auto-selects the sole environment, so an unset default here means
+		// either several environments or none — and "none" is already reported.
+		add(0, "defaults.environment is unset and there is more than one environment (have: %s)",
+			strings.Join(c.EnvNames(), ", "))
 	}
 
 	for _, a := range c.Defaults.Aliases {

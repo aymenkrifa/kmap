@@ -83,3 +83,33 @@ aliases:
 		t.Fatalf("want workload complaint, got %v", err)
 	}
 }
+
+func TestValidateDoesNotClaimTooManyEnvironmentsWhenThereAreNone(t *testing.T) {
+	err := validateBody(t, `
+version: 1
+aliases: {queue: queue}
+`)
+	if err == nil {
+		t.Fatal("want problems, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "no environments defined") {
+		t.Errorf("want the empty-environments problem:\n%s", msg)
+	}
+	if strings.Contains(msg, "more than one environment") {
+		t.Errorf("contradictory: claims several environments when none are defined:\n%s", msg)
+	}
+}
+
+func TestValidateRequiresDefaultEnvironmentWhenSeveralExist(t *testing.T) {
+	err := validateBody(t, `
+version: 1
+environments:
+  local: {command: [klocal]}
+  prod:  {context: Production}
+aliases: {queue: queue}
+`)
+	if err == nil || !strings.Contains(err.Error(), "defaults.environment is unset") {
+		t.Fatalf("want unset-default complaint, got %v", err)
+	}
+}
