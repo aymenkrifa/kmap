@@ -2,9 +2,15 @@ package logfmt
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	SetColor(true) // these tests pin the escaped output
+	os.Exit(m.Run())
+}
 
 func TestFormatPassesThroughNonJSON(t *testing.T) {
 	in := "INFO:     Uvicorn running on http://0.0.0.0:80"

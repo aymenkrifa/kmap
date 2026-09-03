@@ -38,6 +38,9 @@ func TestTableLineCount(t *testing.T) {
 // A coloured cell is wider in bytes than on screen; alignment must use the
 // visible width or every row after a coloured one drifts.
 func TestTableAlignsAroundANSI(t *testing.T) {
+	SetColor(true)
+	defer SetColor(stdoutIsTerminal())
+
 	tb := NewTable("ALIAS", "STATUS")
 	tb.AddRow("api", Green+"Running"+Reset)
 	tb.AddRow("search", "Pending")
@@ -54,7 +57,8 @@ func TestTableAlignsAroundANSI(t *testing.T) {
 func TestVisibleLenIgnoresHyperlinksAndColour(t *testing.T) {
 	saved := Hyperlinks
 	Hyperlinks = true // measure the escaped form, whatever stdout is here
-	defer func() { Hyperlinks = saved }()
+	SetColor(true)
+	defer func() { Hyperlinks = saved; SetColor(stdoutIsTerminal()) }()
 
 	cases := []struct {
 		in   string
@@ -76,7 +80,8 @@ func TestVisibleLenIgnoresHyperlinksAndColour(t *testing.T) {
 func TestTableAlignsAroundHyperlinks(t *testing.T) {
 	saved := Hyperlinks
 	Hyperlinks = true
-	defer func() { Hyperlinks = saved }()
+	SetColor(true)
+	defer func() { Hyperlinks = saved; SetColor(stdoutIsTerminal()) }()
 
 	tb := NewTable("ALIAS", "URL", "AGE")
 	tb.AddRow("api", Link("https://api.example.com/", "api.example.com"), "29h")
@@ -123,5 +128,35 @@ func TestLinkFallsBackToPlainURLOffTerminal(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b") {
 		t.Errorf("piped output must carry no escapes: %q", got)
+	}
+}
+
+func TestPipedOutputCarriesNoEscapes(t *testing.T) {
+	SetColor(false)
+	saved := Hyperlinks
+	Hyperlinks = false
+	defer func() { Hyperlinks = saved; SetColor(stdoutIsTerminal()) }()
+
+	tb := NewTable("ALIAS", "STATUS", "URL")
+	tb.AddRow("api", Green+"Running"+Reset, Link("https://api.example.com/", "api.example.com"))
+	tb.AddRow("worker", Yellow+"scaled to 0"+Reset, Gray+"—"+Reset)
+
+	var out bytes.Buffer
+	tb.Render(&out)
+	if strings.ContainsRune(out.String(), 0x1b) {
+		t.Errorf("redirected output must contain no escape bytes:\n%q", out.String())
+	}
+	for _, want := range []string{"Running", "scaled to 0", "https://api.example.com/"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("lost %q when colour was off:\n%s", want, out.String())
+		}
+	}
+	// and the table still lines up without the escapes
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	col := strings.Index(lines[0], "STATUS")
+	for i, l := range lines[1:] {
+		if !strings.HasPrefix(l[col:], strings.Fields(l)[1]) {
+			t.Errorf("row %d misaligned without colour: %q", i, l)
+		}
 	}
 }

@@ -17,9 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aymenkrifa/kmap/internal/ui"
 )
 
-const reset = "\x1b[0m"
+const escReset = "\x1b[0m"
 
 var levelColor = map[string]string{
 	"debug":    "\x1b[36m",
@@ -28,6 +30,23 @@ var levelColor = map[string]string{
 	"error":    "\x1b[31m",
 	"critical": "\x1b[91m",
 }
+
+// Colors follows the same rule as the rest of kmap's output: a redirected run
+// emits no escapes, so `kmap logs -j | grep` sees clean text.
+var Colors = ui.Colors
+
+// SetColor turns this formatter's colour on or off.
+func SetColor(on bool) { Colors = on }
+
+// col returns an escape sequence, or nothing when colour is off.
+func col(code string) string {
+	if !Colors {
+		return ""
+	}
+	return code
+}
+
+func reset() string { return col(escReset) }
 
 // httpTail matches a message ending in `" <three digits>`, the shape uvicorn
 // access logs use. The code is recoloured in place; nothing is appended.
@@ -57,9 +76,9 @@ func Format(line string) string {
 	var b strings.Builder
 	b.WriteString(formatTime(e.Timestamp))
 	b.WriteString(" - ")
-	b.WriteString(levelColor[strings.ToLower(e.Status)])
+	b.WriteString(col(levelColor[strings.ToLower(e.Status)]))
 	b.WriteString(strings.ToUpper(e.Status))
-	b.WriteString(reset)
+	b.WriteString(reset())
 	b.WriteString(" - ")
 	b.WriteString(colorHTTP(e.Message))
 	if e.Error != nil && e.Error.Stack != "" {
@@ -102,7 +121,7 @@ func colorHTTP(msg string) string {
 	default:
 		c = "\x1b[97m"
 	}
-	return fmt.Sprintf("%s%s%s%s", m[1], c, m[2], reset)
+	return fmt.Sprintf("%s%s%s%s", m[1], col(c), m[2], reset())
 }
 
 // Writer formats each complete line written to it. Partial writes are buffered
