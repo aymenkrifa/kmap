@@ -6,17 +6,22 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// fakeRunner records argv and replays canned stdout.
+// fakeRunner records argv and replays canned stdout. logs runs one goroutine
+// per stream, so recording has to be safe under concurrency.
 type fakeRunner struct {
+	mu    sync.Mutex
 	calls [][]string
 	out   map[string]string
 }
 
 func (f *fakeRunner) Run(_ context.Context, argv []string, stdout, _ io.Writer) error {
+	f.mu.Lock()
 	f.calls = append(f.calls, argv)
+	f.mu.Unlock()
 	joined := strings.Join(argv, " ")
 	for k, v := range f.out {
 		if strings.Contains(joined, k) {

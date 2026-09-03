@@ -82,48 +82,18 @@ type podsOpts struct {
 	help     bool
 }
 
-// parsePodsFlags pulls kmap's own flags out of the argument list wherever they
-// appear, and returns everything else untouched and in order. A "--" ends
-// kmap's parsing: what follows is kubectl's, even if kmap defines the same flag.
+// parsePodsFlags reads the flags pods owns; everything else is kubectl's.
 func parsePodsFlags(args []string) (podsOpts, []string, error) {
 	opts := podsOpts{interval: 2}
-	rest := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--":
-			return opts, append(rest, args[i+1:]...), nil
-		case a == "-w" || a == "--watch" || a == "-f" || a == "--follow":
-			opts.watch = true
-		case a == "-h" || a == "--help":
-			opts.help = true
-		case a == "--interval":
-			if i+1 >= len(args) {
-				return opts, nil, fmt.Errorf("--interval needs a number of seconds")
-			}
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil || n <= 0 {
-				return opts, nil, fmt.Errorf("--interval %q: want a positive number of seconds", args[i+1])
-			}
-			opts.interval, i = n, i+1
-		case strings.HasPrefix(a, "--interval="):
-			n, err := strconv.Atoi(strings.TrimPrefix(a, "--interval="))
-			if err != nil || n <= 0 {
-				return opts, nil, fmt.Errorf("%s: want a positive number of seconds", a)
-			}
-			opts.interval = n
-		case a == "--config":
-			if i+1 >= len(args) {
-				return opts, nil, fmt.Errorf("--config needs a path")
-			}
-			configPath, i = args[i+1], i+1
-		case strings.HasPrefix(a, "--config="):
-			configPath = strings.TrimPrefix(a, "--config=")
-		default:
-			rest = append(rest, a)
-		}
-	}
-	return opts, rest, nil
+	rest, help, err := selfFlags{
+		bools: map[string]*bool{
+			"-w": &opts.watch, "--watch": &opts.watch,
+			"-f": &opts.watch, "--follow": &opts.watch,
+		},
+		ints: map[string]*int{"--interval": &opts.interval},
+	}.parse(args)
+	opts.help = help
+	return opts, rest, err
 }
 
 // takeInterval consumes a bare trailing number as the refresh interval, so

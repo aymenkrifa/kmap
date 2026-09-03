@@ -6,6 +6,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -82,4 +84,68 @@ func splitArgs(args []string) (aliases, passthrough []string) {
 		}
 	}
 	return args, nil
+}
+
+// selfFlags declares the flags a command parses for itself. Cobra cannot both
+// accept a command's own flags after the positionals (`pods staging api -f 5`)
+// and forward unknown flags to kubectl (`pods prod api -o wide`), so commands
+// needing both set DisableFlagParsing and declare their flags here instead.
+type selfFlags struct {
+	bools map[string]*bool
+	ints  map[string]*int
+}
+
+// parse pulls the declared flags out of args wherever they appear and returns
+// everything else in order. A "--" ends kmap's parsing: what follows belongs to
+// kubectl even if kmap declares the same flag. --config and --help are always
+// understood, since the persistent flag no longer reaches these commands.
+func (s selfFlags) parse(args []string) (rest []string, help bool, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return append(rest, args[i+1:]...), help, nil
+		}
+		if a == "-h" || a == "--help" {
+			help = true
+			continue
+		}
+		if p, ok := s.bools[a]; ok {
+			*p = true
+			continue
+		}
+		name, value, inline := strings.Cut(a, "=")
+		takeValue := func() (string, error) {
+			if inline {
+				return value, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s needs a value", name)
+			}
+			i++
+			return args[i], nil
+		}
+		if p, ok := s.ints[name]; ok {
+			v, err := takeValue()
+			if err != nil {
+				return nil, help, err
+			}
+			n, cErr := strconv.Atoi(v)
+			if cErr != nil || n <= 0 {
+				return nil, help, fmt.Errorf("%s %q: want a positive number", name, v)
+			}
+			*p = n
+			continue
+		}
+		if name == "--config" {
+			v, err := takeValue()
+			if err != nil {
+				return nil, help, err
+			}
+			configPath = v
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, help, nil
 }
