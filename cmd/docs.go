@@ -137,12 +137,56 @@ func browse(url string) error {
 	return fmt.Errorf("no xdg-open or open on PATH; the URL is %s", url)
 }
 
-// probeResult is one alias's discovery outcome.
+// probeResult is one alias's discovery outcome. When path is empty, note says
+// which kind of nothing it was: a service that is down cannot be distinguished
+// from one without documentation unless you say so.
 type probeResult struct {
 	alias string
 	env   string
 	path  string // the first documentation path that answered, "" if none
 	note  string // why nothing was found
+}
+
+// probeOutcome is what probing one origin learned.
+type probeOutcome struct {
+	match    string   // the documentation path that answered
+	rejected []string // paths that answered 200 but were not documentation
+	codes    map[int]bool
+	failed   int // transport-level failures, i.e. nothing answered at all
+}
+
+// describe turns an unsuccessful probe into something worth reading.
+func (o probeOutcome) describe(total int) string {
+	switch {
+	case o.failed == total:
+		return "unreachable"
+	case len(o.rejected) == total:
+		// every path answers: a single-page app or a catch-all route, not docs
+		return "answers 200 everywhere — catch-all route, not documentation"
+	case len(o.rejected) > 0:
+		shown := o.rejected
+		suffix := ""
+		if len(shown) > 3 {
+			shown, suffix = shown[:3], fmt.Sprintf(" (+%d)", len(o.rejected)-3)
+		}
+		return fmt.Sprintf("200 at %s%s, but not documentation", strings.Join(shown, " "), suffix)
+	case o.only5xx():
+		return "not serving (503) — scaled to zero?"
+	default:
+		return "no documentation path"
+	}
+}
+
+func (o probeOutcome) only5xx() bool {
+	if len(o.codes) == 0 {
+		return false
+	}
+	for c := range o.codes {
+		if c < 500 {
+			return false
+		}
+	}
+	return true
 }
 
 func runDocsDiscover(cmd *cobra.Command, args []string) error {
@@ -176,9 +220,10 @@ func runDocsDiscover(cmd *cobra.Command, args []string) error {
 			results = append(results, r)
 			continue
 		}
-		r.path = probeDocs(cmd.Context(), client, routes[0].base, cfg.Defaults.DocsPaths)
+		o := probeDocs(cmd.Context(), client, routes[0].base, cfg.Defaults.DocsPaths)
+		r.path = o.match
 		if r.path == "" {
-			r.note = "nothing served"
+			r.note = o.describe(len(cfg.Defaults.DocsPaths))
 		}
 		results = append(results, r)
 	}
@@ -216,25 +261,35 @@ func countFound(rs []probeResult) int {
 	return n
 }
 
-// probeDocs returns the first path that answers 200 with something that looks
-// like documentation rather than an application page.
-func probeDocs(ctx context.Context, c *http.Client, base string, paths []string) string {
+// probeDocs looks for the first path that answers 200 with something that is
+// actually documentation, and records enough about the failures to explain a
+// miss afterwards.
+func probeDocs(ctx context.Context, c *http.Client, base string, paths []string) probeOutcome {
+	o := probeOutcome{codes: map[int]bool{}}
 	for _, p := range paths {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+p, nil)
 		if err != nil {
+			o.failed++
 			continue
 		}
 		resp, err := c.Do(req)
 		if err != nil {
+			o.failed++
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK && looksLikeDocs(p, body) {
-			return p
+		o.codes[resp.StatusCode] = true
+		if resp.StatusCode != http.StatusOK {
+			continue
 		}
+		if looksLikeDocs(p, body) {
+			o.match = p
+			return o
+		}
+		o.rejected = append(o.rejected, p)
 	}
-	return ""
+	return o
 }
 
 // looksLikeDocs guards against a catch-all route answering 200 for everything.

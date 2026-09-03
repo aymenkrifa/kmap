@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aymenkrifa/kmap/internal/config"
 )
@@ -178,5 +183,65 @@ func TestWriteDocsPathsIsIdempotent(t *testing.T) {
 	}
 	if got := cfg.Aliases["queue"].All.Docs; got != "/redoc" {
 		t.Errorf("docs = %q, want /redoc", got)
+	}
+}
+
+// "nothing served" hid three different situations. Each should say which.
+func TestProbeOutcomeDescribe(t *testing.T) {
+	cases := []struct {
+		name  string
+		o     probeOutcome
+		total int
+		want  string
+	}{
+		{"nothing answered at all", probeOutcome{failed: 9}, 9, "unreachable"},
+		{"scaled to zero", probeOutcome{codes: map[int]bool{503: true}}, 9, "not serving"},
+		{"up but undocumented", probeOutcome{codes: map[int]bool{404: true, 403: true}}, 9, "no documentation path"},
+		{"answered but not docs", probeOutcome{codes: map[int]bool{200: true}, rejected: []string{"/api"}}, 9, "200 at /api"},
+		{"catch-all answers everything", probeOutcome{codes: map[int]bool{200: true},
+			rejected: []string{"/a", "/b", "/c"}}, 3, "catch-all"},
+		{"many rejections are truncated", probeOutcome{codes: map[int]bool{200: true},
+			rejected: []string{"/a", "/b", "/c", "/d", "/e"}}, 9, "(+2)"},
+		{"a 5xx among others is not scaled to zero", probeOutcome{codes: map[int]bool{503: true, 404: true}}, 9, "no documentation path"},
+	}
+	for _, c := range cases {
+		if got := c.o.describe(c.total); !strings.Contains(got, c.want) {
+			t.Errorf("%s: describe = %q, want it to mention %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestProbeDocsRecordsRejections(t *testing.T) {
+	// a catch-all origin that answers 200 with an app shell for everything
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/openapi.json" {
+			io.WriteString(w, `{"openapi":"3.1.0"}`)
+			return
+		}
+		io.WriteString(w, "<html><div id=root></div></html>")
+	}))
+	defer srv.Close()
+
+	o := probeDocs(context.Background(), srv.Client(), srv.URL, []string{"/docs", "/openapi.json"})
+	if o.match != "/openapi.json" {
+		t.Errorf("match = %q, want /openapi.json", o.match)
+	}
+	if len(o.rejected) != 1 || o.rejected[0] != "/docs" {
+		t.Errorf("rejected = %v, want [/docs]", o.rejected)
+	}
+}
+
+func TestProbeDocsReportsUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // nothing is listening now
+
+	paths := []string{"/docs", "/redoc"}
+	o := probeDocs(context.Background(), &http.Client{Timeout: 2 * time.Second}, url, paths)
+	if o.match != "" {
+		t.Errorf("match = %q, want none", o.match)
+	}
+	if got := o.describe(len(paths)); got != "unreachable" {
+		t.Errorf("describe = %q, want unreachable", got)
 	}
 }
