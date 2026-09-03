@@ -102,3 +102,138 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatalf("want fs.ErrNotExist, got %v", err)
 	}
 }
+
+func TestWorkloadList(t *testing.T) {
+	tests := []struct {
+		name string
+		m    *Mapping
+		want []string
+	}{
+		{
+			name: "single workload",
+			m: &Mapping{
+				Workload: "api",
+			},
+			want: []string{"api"},
+		},
+		{
+			name: "multiple workloads",
+			m: &Mapping{
+				Workloads: []string{"api", "worker", "cache"},
+			},
+			want: []string{"api", "worker", "cache"},
+		},
+		{
+			name: "empty mapping",
+			m:    &Mapping{},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.m.WorkloadList()
+			if len(got) != len(tt.want) {
+				t.Errorf("WorkloadList() = %v, want %v", got, tt.want)
+			}
+			for i, v := range got {
+				if v != tt.want[i] {
+					t.Errorf("WorkloadList()[%d] = %q, want %q", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestAliasNames(t *testing.T) {
+	p := write(t, `
+version: 1
+environments:
+  local: {command: [kubectl]}
+aliases:
+  zebra: zebra
+  apple: apple
+  mango: mango
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got := cfg.AliasNames()
+	want := []string{"apple", "mango", "zebra"}
+
+	if len(got) != len(want) {
+		t.Errorf("AliasNames() returned %d names, want %d", len(got), len(want))
+	}
+	for i, v := range got {
+		if v != want[i] {
+			t.Errorf("AliasNames()[%d] = %q, want %q", i, v, want[i])
+		}
+	}
+}
+
+func TestEnvNames(t *testing.T) {
+	p := write(t, `
+version: 1
+environments:
+  staging:
+    command: [kubectl]
+  prod:
+    context: Production
+  dev:
+    command: [klocal]
+aliases:
+  queue: queue
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got := cfg.EnvNames()
+	want := []string{"dev", "prod", "staging"}
+
+	if len(got) != len(want) {
+		t.Errorf("EnvNames() returned %d names, want %d", len(got), len(want))
+	}
+	for i, v := range got {
+		if v != want[i] {
+			t.Errorf("EnvNames()[%d] = %q, want %q", i, v, want[i])
+		}
+	}
+}
+
+func TestDefaultPath(t *testing.T) {
+	tests := []struct {
+		name         string
+		kmapConfig   string
+		xdgHome      string
+		wantContains string
+	}{
+		{
+			name:         "KMAP_CONFIG set",
+			kmapConfig:   "/etc/kmap.yaml",
+			wantContains: "/etc/kmap.yaml",
+		},
+		{
+			name:         "XDG_CONFIG_HOME set",
+			xdgHome:      "/custom/config",
+			wantContains: "/custom/config/kmap/config.yaml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.kmapConfig != "" {
+				t.Setenv("KMAP_CONFIG", tt.kmapConfig)
+			}
+			if tt.xdgHome != "" {
+				t.Setenv("XDG_CONFIG_HOME", tt.xdgHome)
+			}
+			got := DefaultPath()
+			if got != tt.wantContains {
+				t.Errorf("DefaultPath() = %q, want %q", got, tt.wantContains)
+			}
+		})
+	}
+}

@@ -97,7 +97,7 @@ func (a *Alias) UnmarshalYAML(n *yaml.Node) error {
 	return n.Decode(&a.Envs)
 }
 
-// Workloads returns every workload named by this mapping, always at least one
+// WorkloadList returns every workload named by this mapping, always at least one
 // entry unless the mapping is empty.
 func (m *Mapping) WorkloadList() []string {
 	if len(m.Workloads) > 0 {
