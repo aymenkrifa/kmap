@@ -63,6 +63,7 @@ type deployInfo struct{ desired, ready int }
 type ingressRoute struct {
 	service string
 	host    string
+	base    string // scheme://host, for hanging another path off
 	url     string
 }
 
@@ -210,6 +211,7 @@ func parseIngresses(b []byte) []ingressRoute {
 				out = append(out, ingressRoute{
 					service: p.Backend.Service.Name,
 					host:    r.Host,
+					base:    scheme + "://" + r.Host,
 					url:     scheme + "://" + r.Host + path,
 				})
 			}

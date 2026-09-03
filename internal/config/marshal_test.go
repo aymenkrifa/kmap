@@ -106,3 +106,60 @@ aliases:
 		t.Error("prod lost its protected flag")
 	}
 }
+
+// A map at alias level whose keys are all Mapping fields means "this workload
+// everywhere", not "environments called workload and docs". Without this the
+// only way to give a scalar alias a docs path was to invent an environment.
+func TestAliasAcceptsMappingObjectShape(t *testing.T) {
+	cfg, err := Load(write(t, `
+version: 1
+defaults: {environment: local}
+environments:
+  local: {command: [klocal]}
+  prod:  {context: Production}
+aliases:
+  queue: {workload: queue, docs: /docs}
+  web: {workload: web-v2, namespace: ui, selector: "k=v", docs: /swagger}
+  api:
+    local: {workload: api-v2, docs: /redoc}
+    prod:  api-gateway@backend
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("object-shaped aliases should validate: %v", err)
+	}
+
+	queue := cfg.Aliases["queue"].All
+	if queue == nil || queue.Workload != "queue" || queue.Docs != "/docs" {
+		t.Errorf("queue = %+v, want a single mapping for every environment", queue)
+	}
+	w := cfg.Aliases["web"].All
+	if w == nil || w.Namespace != "ui" || w.Selector != "k=v" || w.Docs != "/swagger" {
+		t.Errorf("web = %+v", w)
+	}
+	// a genuine environment map is still read as one
+	if cfg.Aliases["api"].All != nil {
+		t.Error("api names environments, so it must not collapse to a single mapping")
+	}
+	if got := cfg.Aliases["api"].Envs["local"]; got == nil || got.Docs != "/redoc" {
+		t.Errorf("api/local = %+v", got)
+	}
+
+	// and it survives a marshal round trip
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load(write(t, string(out)))
+	if err != nil {
+		t.Fatalf("round trip failed: %v\n%s", err, out)
+	}
+	if err := back.Validate(); err != nil {
+		t.Fatalf("round-tripped config does not validate: %v\n%s", err, out)
+	}
+	if b := back.Aliases["queue"].All; b == nil || b.Docs != "/docs" {
+		t.Errorf("queue lost its docs path in the round trip:\n%s", out)
+	}
+}

@@ -18,6 +18,7 @@ type Target struct {
 	Env       string
 	Namespace string
 	Selector  string
+	Docs      string   // path to this service's API docs, e.g. /docs
 	Workloads []string // always at least one entry
 }
 
@@ -112,6 +113,7 @@ func Resolve(cfg *config.Config, alias, env string) (Target, error) {
 		Env:       env,
 		Namespace: ns,
 		Selector:  sel,
+		Docs:      m.Docs,
 		Workloads: workloads,
 	}, nil
 }

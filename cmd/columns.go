@@ -127,6 +127,13 @@ var columns = map[string]column{
 		}
 		return out
 	}},
+	"docs": {header: "DOCS", needs: needsIngress, render: func(c cell) string {
+		u := docsURL(c)
+		if u == "" {
+			return dash
+		}
+		return ui.Link(u, "docs")
+	}},
 	"namespace": {header: "NAMESPACE", render: func(c cell) string {
 		return c.target.Namespace
 	}},
@@ -134,10 +141,24 @@ var columns = map[string]column{
 
 // DefaultColumns is what pods shows when neither config nor --columns says
 // otherwise. reason earns its default slot because a pod stuck in an init
-// container otherwise reads as a bare "Pending"; url earns its own because the
-// hostnames are not derivable from workload names. url costs one `get ingress`
-// per namespace — drop it from defaults.columns if that is not worth it.
-var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age", "url"}
+// container otherwise reads as a bare "Pending". url and docs are opt-in: each
+// costs one `get ingress` per namespace, and neither is what you look at a
+// status table for.
+var DefaultColumns = []string{"alias", "workload", "ready", "status", "reason", "restarts", "age"}
+
+// docsURL builds the documentation URL for a target: the service's ingress
+// origin with its configured docs path hung off it. Empty when the alias has no
+// docs path configured, or nothing serves it.
+func docsURL(c cell) string {
+	if c.target.Docs == "" {
+		return ""
+	}
+	urls := c.ns.urlsFor(c.target.Workloads, c.pod)
+	if len(urls) == 0 {
+		return ""
+	}
+	return urls[0].base + c.target.Docs
+}
 
 // resolveColumns turns names into columns, reporting an unknown name with the
 // full list rather than silently dropping it.

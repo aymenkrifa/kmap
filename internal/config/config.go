@@ -17,6 +17,14 @@ const DefaultSelector = "app={{.Workload}}"
 // DefaultNamespace is used when neither the alias nor the environment sets one.
 const DefaultNamespace = "default"
 
+// DefaultDocsPaths are the API-documentation paths kmap probes for. FastAPI
+// serves the first three, @nestjs/swagger usually /docs or /api-json, and
+// springdoc /v3/api-docs.
+var DefaultDocsPaths = []string{
+	"/docs", "/redoc", "/openapi.json", "/swagger", "/swagger-ui.html",
+	"/api-docs", "/api-json", "/swagger-json", "/v3/api-docs",
+}
+
 type Config struct {
 	Version      int                    `yaml:"version"`
 	Defaults     Defaults               `yaml:"defaults"`
@@ -31,6 +39,8 @@ type Defaults struct {
 	Aliases     []string `yaml:"aliases,omitempty"`
 	Selector    string   `yaml:"selector,omitempty"`
 	Columns     []string `yaml:"columns,omitempty"`
+	DocsPaths   []string `yaml:"docs_paths,omitempty"`
+	Insecure    bool     `yaml:"insecure,omitempty"`
 }
 
 // Environment is reached either by running Command, or by running kubectl with
@@ -57,6 +67,7 @@ type Mapping struct {
 	Workloads []string `yaml:"workloads,omitempty"`
 	Namespace string   `yaml:"namespace,omitempty"`
 	Selector  string   `yaml:"selector,omitempty"`
+	Docs      string   `yaml:"docs,omitempty"`
 
 	Line int `yaml:"-"`
 }
@@ -79,8 +90,17 @@ func (m *Mapping) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// UnmarshalYAML accepts either a scalar (one workload for every environment)
-// or a map keyed by environment name.
+// mappingFields are the keys of a Mapping. A map at alias level whose keys are
+// all in here describes one workload for every environment; anything else is a
+// map keyed by environment name.
+var mappingFields = map[string]bool{
+	"workload": true, "workloads": true, "namespace": true,
+	"selector": true, "docs": true,
+}
+
+// UnmarshalYAML accepts a scalar (one workload for every environment), a
+// mapping object (likewise, but able to carry a namespace, selector or docs
+// path), or a map keyed by environment name.
 func (a *Alias) UnmarshalYAML(n *yaml.Node) error {
 	a.Line = n.Line
 	if n.Kind == yaml.ScalarNode {
@@ -94,14 +114,37 @@ func (a *Alias) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind != yaml.MappingNode {
 		return fmt.Errorf("line %d: alias must be a name or a map of environments", n.Line)
 	}
+	if IsMappingShaped(n) {
+		var m Mapping
+		if err := m.UnmarshalYAML(n); err != nil {
+			return err
+		}
+		a.All = &m
+		return nil
+	}
 	a.Envs = map[string]*Mapping{}
 	return n.Decode(&a.Envs)
+}
+
+// IsMappingShaped reports whether a node at alias level describes one workload
+// rather than a set of environments. Exported so tools that rewrite the config
+// classify aliases exactly the way the parser does.
+func IsMappingShaped(n *yaml.Node) bool {
+	if len(n.Content) == 0 {
+		return false
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if !mappingFields[n.Content[i].Value] {
+			return false
+		}
+	}
+	return true
 }
 
 // MarshalYAML writes back the compact form this mapping was probably written
 // in: a bare name, or name@namespace, whenever nothing else is set.
 func (m Mapping) MarshalYAML() (any, error) {
-	if len(m.Workloads) == 0 && m.Selector == "" {
+	if len(m.Workloads) == 0 && m.Selector == "" && m.Docs == "" {
 		if m.Namespace != "" {
 			return m.Workload + "@" + m.Namespace, nil
 		}
@@ -171,6 +214,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyDefaults() {
 	if c.Defaults.Selector == "" {
 		c.Defaults.Selector = DefaultSelector
+	}
+	if len(c.Defaults.DocsPaths) == 0 {
+		c.Defaults.DocsPaths = DefaultDocsPaths
 	}
 	if c.Defaults.Environment == "" && len(c.Environments) == 1 {
 		for name := range c.Environments {
