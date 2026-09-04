@@ -205,23 +205,27 @@ func runPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer
 	}
 
 	extra := map[string]*nsData{}
+	var missing dataset
 	for _, ns := range namespaces {
 		want := needs
 		if !absentIn[ns] {
 			want &^= needsDeploys // nothing to explain here
 		}
-		d, err := fetchNSData(ctx, r, er, ns, want)
-		if err != nil {
-			return err
-		}
+		d := fetchNSData(ctx, r, er, ns, want)
 		extra[ns] = d
+		missing |= d.missing
 	}
 
 	header := fmt.Sprintf("%s%s%s — %d alias(es)", ui.Bold, env, ui.Reset, len(targets))
 	if envDef.Protected {
 		header += " " + ui.Red + "[protected]" + ui.Reset
 	}
-	fmt.Fprintf(w, "%s  %s%s%s\n\n", header, ui.Gray, time.Now().Format("15:04:05"), ui.Reset)
+	fmt.Fprintf(w, "%s  %s%s%s\n", header, ui.Gray, time.Now().Format("15:04:05"), ui.Reset)
+	if names := missing.names(); len(names) > 0 {
+		fmt.Fprintf(w, "%scannot read %s here — those columns stay blank%s\n",
+			ui.Yellow, strings.Join(names, ", "), ui.Reset)
+	}
+	fmt.Fprintln(w)
 
 	heads := make([]string, len(cols))
 	for i, c := range cols {

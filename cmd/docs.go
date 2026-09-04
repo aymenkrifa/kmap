@@ -85,9 +85,11 @@ func docsTargets(ctx context.Context, cfg *config.Config, args []string) (
 		if _, ok := seen[t.Namespace]; ok {
 			continue
 		}
-		d, err := fetchNSData(ctx, runner, er, t.Namespace, needsIngress)
-		if err != nil {
-			return "", nil, nil, err
+		// pods can shrug off a missing ingress list; docs is built on it.
+		d := fetchNSData(ctx, runner, er, t.Namespace, needsIngress)
+		if d.missing&needsIngress != 0 {
+			return "", nil, nil, fmt.Errorf(
+				"cannot list ingresses in %s/%s, and kmap docs needs them to find service URLs", env, t.Namespace)
 		}
 		seen[t.Namespace] = d
 	}

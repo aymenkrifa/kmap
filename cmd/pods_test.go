@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ type fakeRunner struct {
 	mu    sync.Mutex
 	calls [][]string
 	out   map[string]string
+	fail  map[string]error
 }
 
 func (f *fakeRunner) Run(_ context.Context, argv []string, stdout, _ io.Writer) error {
@@ -23,6 +25,11 @@ func (f *fakeRunner) Run(_ context.Context, argv []string, stdout, _ io.Writer) 
 	f.calls = append(f.calls, argv)
 	f.mu.Unlock()
 	joined := strings.Join(argv, " ")
+	for k, err := range f.fail {
+		if strings.Contains(joined, k) {
+			return err
+		}
+	}
 	for k, v := range f.out {
 		if strings.Contains(joined, k) {
 			io.WriteString(stdout, v)
@@ -209,5 +216,49 @@ func TestParsePodsFlagsRejectsBadInterval(t *testing.T) {
 		if _, _, err := parsePodsFlags(in); err == nil {
 			t.Errorf("parsePodsFlags(%v) should have failed", in)
 		}
+	}
+}
+
+// A namespace where kmap may list pods but not ingresses is normal: RBAC is
+// granted per resource. One forbidden resource must cost its own column, not
+// the whole table.
+func TestFetchNSDataDegradesWhenAResourceIsForbidden(t *testing.T) {
+	f := &fakeRunner{
+		out:  map[string]string{"get deploy": `{"items":[{"metadata":{"name":"queue"},"spec":{"replicas":0}}]}`},
+		fail: map[string]error{"get ingress": errors.New("exit status 1")},
+	}
+	er := envRunner{argv: func(a ...string) []string { return append([]string{"kubectl"}, a...) }}
+
+	d := fetchNSData(context.Background(), f, er, "default", needsDeploys|needsIngress)
+	if got, ok := d.deploys["queue"]; !ok || got.desired != 0 {
+		t.Errorf("deploys = %v, want the readable resource still parsed", d.deploys)
+	}
+	if d.missing&needsIngress == 0 {
+		t.Error("ingress failure was not recorded in missing")
+	}
+	if d.missing&needsDeploys != 0 {
+		t.Error("deploys marked missing though the call succeeded")
+	}
+}
+
+func TestPodsReportsWhatItCouldNotRead(t *testing.T) {
+	cfg := testConfig(t)
+	f := &fakeRunner{
+		out:  map[string]string{"get pods": twoPods},
+		fail: map[string]error{"get ingress": errors.New("exit status 1")},
+	}
+
+	var out bytes.Buffer
+	err := runPods(context.Background(), cfg, f, &out, "local",
+		[]string{"api"}, nil, []string{"alias", "ready", "docs"})
+	if err != nil {
+		t.Fatalf("forbidden ingress must not abort the table: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "api") || !strings.Contains(s, "1/1") {
+		t.Errorf("the table did not render:\n%s", s)
+	}
+	if !strings.Contains(s, "ingress") {
+		t.Errorf("no note explaining the empty DOCS column:\n%s", s)
 	}
 }

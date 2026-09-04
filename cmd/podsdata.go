@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -54,6 +53,7 @@ type nsData struct {
 	metrics map[string]podMetric
 	deploys map[string]deployInfo
 	ingress []ingressRoute
+	missing dataset // asked for, but the cluster would not hand it over
 }
 
 type podMetric struct{ cpu, mem string }
@@ -92,30 +92,35 @@ func (n *nsData) urlsFor(workloads []string, p *podItem) []ingressRoute {
 	return out
 }
 
-// fetch loads the datasets the chosen columns need, one call each per namespace.
-func fetchNSData(ctx context.Context, r kube.Runner, env envRunner, ns string, needs dataset) (*nsData, error) {
+// fetchNSData loads the datasets the chosen columns need, one call each per
+// namespace. Nothing here is fatal: RBAC is granted per resource, so a cluster
+// that lists pods may still refuse ingresses, and metrics-server need not be
+// installed at all. A refused dataset costs its own column and is recorded in
+// missing so the caller can say why that column came back blank.
+func fetchNSData(ctx context.Context, r kube.Runner, env envRunner, ns string, needs dataset) *nsData {
 	d := &nsData{}
 	if needs&needsMetrics != 0 {
-		// metrics-server may be absent; a missing metric is a dash, not an error
 		if out, err := env.capture(ctx, r, "top", "pods", "-n", ns, "--no-headers"); err == nil {
 			d.metrics = parseTopPods(out)
+		} else {
+			d.missing |= needsMetrics
 		}
 	}
 	if needs&needsDeploys != 0 {
-		out, err := env.capture(ctx, r, "get", "deploy", "-n", ns, "-o", "json")
-		if err != nil {
-			return nil, fmt.Errorf("listing deployments in %s: %w", ns, err)
+		if out, err := env.capture(ctx, r, "get", "deploy", "-n", ns, "-o", "json"); err == nil {
+			d.deploys = parseDeploys(out)
+		} else {
+			d.missing |= needsDeploys
 		}
-		d.deploys = parseDeploys(out)
 	}
 	if needs&needsIngress != 0 {
-		out, err := env.capture(ctx, r, "get", "ingress", "-n", ns, "-o", "json")
-		if err != nil {
-			return nil, fmt.Errorf("listing ingresses in %s: %w", ns, err)
+		if out, err := env.capture(ctx, r, "get", "ingress", "-n", ns, "-o", "json"); err == nil {
+			d.ingress = parseIngresses(out)
+		} else {
+			d.missing |= needsIngress
 		}
-		d.ingress = parseIngresses(out)
 	}
-	return d, nil
+	return d
 }
 
 // envRunner binds an environment so callers do not rethread it through argv.

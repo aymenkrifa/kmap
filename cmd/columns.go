@@ -20,6 +20,27 @@ const (
 	needsIngress
 )
 
+// datasetNames pairs each bit with the kubectl resource behind it, so a run
+// can name what it failed to read in the user's own vocabulary.
+var datasetNames = []struct {
+	bit  dataset
+	name string
+}{
+	{needsMetrics, "metrics"},
+	{needsDeploys, "deployments"},
+	{needsIngress, "ingresses"},
+}
+
+func (d dataset) names() []string {
+	var out []string
+	for _, n := range datasetNames {
+		if d&n.bit != 0 {
+			out = append(out, n.name)
+		}
+	}
+	return out
+}
+
 // cell is everything a column can render from. pod is nil when the alias
 // matched nothing, which is the row that says why.
 type cell struct {
