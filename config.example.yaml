@@ -1,0 +1,85 @@
+# kmap configuration — copy to ~/.config/kmap/config.yaml and edit.
+#
+# `kmap init` generates a starter version of this file from your kubeconfig.
+# `kmap config validate` reports every problem in one pass, with line numbers.
+
+version: 1
+
+defaults:
+  # What a bare `kmap pods` targets. Optional when there is only one environment.
+  environment: local
+
+  # What a bare `kmap pods` shows. Optional; defaults to every alias, sorted.
+  aliases: [api, auth, worker]
+
+  # How to find a workload's pods. {{.Workload}} is the resolved workload name.
+  # Optional; this is the built-in default.
+  selector: "app={{.Workload}}"
+
+  # Columns for `kmap pods`. Optional; run `kmap pods --help` for the full list.
+  # cpu and mem need metrics-server; url and docs need read access to ingresses.
+  columns: [alias, workload, ready, status, reason, restarts, age, docs]
+
+  # Paths `kmap docs discover` probes. Optional; the default covers FastAPI,
+  # NestJS, springdoc and plain Swagger UI.
+  # docs_paths: [/docs, /redoc, /openapi.json, /v3/api-docs]
+
+  # Skip TLS verification while probing. For dev clusters with self-signed
+  # certs; also available as `kmap docs discover --insecure`.
+  # insecure: false
+
+# Each environment is reached one of two ways, and exactly one must be set:
+#   command: an argv prefix — any wrapper, whether or not it is kubectl
+#   context: a context name, run as `kubectl --context <name>`
+environments:
+  local:
+    command: [klocal]          # e.g. a wrapper that adds --kubeconfig and -n
+  staging:
+    context: Staging
+    namespace: staging         # optional: default namespace for this environment
+  prod:
+    context: Production
+    protected: true            # renders a red [protected] badge in the header
+
+# aliases map your names onto real workloads. Three shapes, mix freely.
+aliases:
+
+  # 1. A bare name: the same workload in every environment.
+  queue: queue
+  web: web-v2
+  admin: admin-v2
+
+  # A bare name may also carry a namespace, as workload@namespace.
+  cache: cache@data
+
+  # 2. An object: one workload everywhere, plus its details.
+  sdk:
+    workload: vendor-sdk
+    docs: /docs                # `kmap docs sdk` opens <ingress origin>/docs
+  legacy:
+    workload: legacy-api
+    selector: "app.kubernetes.io/name=legacy-api"   # labelled differently
+
+  # An object may name several workloads, and one row is printed per pod of
+  # each. A `key={{.Workload}}` selector is widened to `key in (a,b)`
+  # automatically; any other template needs an explicit selector here.
+  bundle:
+    workloads: [api-server, worker]
+
+  # 3. A map keyed by environment: a different workload per cluster. Each value
+  #    is itself either a bare name, a name@namespace, or an object.
+  api:
+    local:   {workload: api-server, docs: /docs}
+    staging: backend
+    prod:    api-gateway@backend
+  auth:
+    local:   auth
+    staging: svc-auth@svc-auth
+    prod:    svc-auth@svc-auth
+  worker:
+    local:   worker
+    staging: svc-worker
+    prod:    svc-worker
+
+# Namespace resolution, most specific first:
+#   the alias mapping's namespace, then the environment's, then "default".
