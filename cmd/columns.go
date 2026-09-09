@@ -91,8 +91,13 @@ var columns = map[string]column{
 		}
 		return colorPhase(c.pod.Status.Phase, c.ready, c.total)
 	}},
-	"reason": {header: "REASON", render: func(c cell) string {
+	"reason": {header: "REASON", needs: needsDeploys, render: func(c cell) string {
 		if c.pod == nil {
+			// The row is empty, but the deployment says pods are ready: name the
+			// count, since that is what makes a selector mismatch obvious.
+			if d, ok := deployFor(c); ok && d.ready > 0 {
+				return ui.Yellow + fmt.Sprintf("%d ready, none matched", d.ready) + ui.Reset
+			}
 			return dash
 		}
 		return podReason(*c.pod)
@@ -215,17 +220,35 @@ func absentStatus(c cell) string {
 	if c.ns == nil || c.ns.deploys == nil {
 		return ui.Gray + "absent" + ui.Reset
 	}
-	for _, w := range c.target.Workloads {
-		d, ok := c.ns.deploys[w]
-		if !ok {
-			continue
-		}
-		if d.desired == 0 {
-			return ui.Yellow + "scaled to 0" + ui.Reset
-		}
+	d, ok := deployFor(c)
+	if !ok {
+		return ui.Gray + "not deployed" + ui.Reset
+	}
+	switch {
+	case d.desired == 0:
+		return ui.Yellow + "scaled to 0" + ui.Reset
+	case d.ready > 0:
+		// Those replicas are running and ready; the selector simply did not
+		// match them, which is a label problem rather than an outage.
+		return ui.Yellow + "selector missed" + ui.Reset
+	default:
 		return ui.Red + "no pods" + ui.Reset // desired > 0 but nothing running
 	}
-	return ui.Gray + "not deployed" + ui.Reset
+}
+
+// deployFor returns the deployment behind this row, which is what turns an
+// empty row into an explanation. An alias naming several workloads reports on
+// the first one that exists.
+func deployFor(c cell) (deployInfo, bool) {
+	if c.ns == nil || c.ns.deploys == nil {
+		return deployInfo{}, false
+	}
+	for _, w := range c.target.Workloads {
+		if d, ok := c.ns.deploys[w]; ok {
+			return d, true
+		}
+	}
+	return deployInfo{}, false
 }
 
 // podReason explains a pod that is not simply running: the container's waiting

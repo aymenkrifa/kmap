@@ -81,6 +81,22 @@ func TestAbsentStatusDistinguishesScaledFromMissing(t *testing.T) {
 	}
 }
 
+// A deployment reporting ready replicas while the selector matched nothing is
+// not the cluster's problem: those pods are running, kmap just cannot see them.
+// Saying "no pods" there sends you to look at a healthy service.
+func TestAbsentStatusNamesASelectorMismatch(t *testing.T) {
+	c := cell{ns: &nsData{deploys: map[string]deployInfo{"api-server": {desired: 1, ready: 1}}}}
+	c.target.Workloads = []string{"api-server"}
+
+	got := absentStatus(c)
+	if strings.Contains(got, "no pods") {
+		t.Errorf("a deployment with a ready replica has pods; got %q", got)
+	}
+	if !strings.Contains(got, "selector missed") {
+		t.Errorf("want the selector named as the problem, got %q", got)
+	}
+}
+
 func TestParsers(t *testing.T) {
 	m := parseTopPods([]byte("backend-5f8-nmp5z   11m   679Mi\nqueue-abc  1m  20Mi\n\n"))
 	if len(m) != 2 || m["backend-5f8-nmp5z"].cpu != "11m" || m["queue-abc"].mem != "20Mi" {
@@ -130,6 +146,37 @@ func TestPodsRendersUrlAndCpuColumns(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("output missing %q:\n%q", want, s)
 		}
+	}
+}
+
+// The bug this reproduces: a deployment named api-server whose pod template
+// labels its pods app=api. The default selector cannot match them, and kmap
+// used to call that "no pods" — sending the reader to look at a service that
+// was running the whole time.
+func TestPodsExplainsAHealthyDeploymentWhoseLabelsDoNotMatch(t *testing.T) {
+	cfg := testConfig(t)
+	f := &fakeRunner{out: map[string]string{
+		"get pods": `{"items":[{"metadata":{"name":"api-server-1","labels":{"app":"api"},
+		  "creationTimestamp":"2026-09-03T10:00:00Z"},
+		  "status":{"phase":"Running","containerStatuses":[{"ready":true,"restartCount":0}]}}]}`,
+		"get deploy": `{"items":[{"metadata":{"name":"api-server"},
+		  "spec":{"replicas":1},"status":{"readyReplicas":1}}]}`,
+	}}
+
+	var out bytes.Buffer
+	if err := runPods(context.Background(), cfg, f, &out, "local", []string{"api"}, nil,
+		[]string{"alias", "workload", "status", "reason"}); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if strings.Contains(s, "no pods") {
+		t.Errorf("a ready replica is not an absence:\n%s", s)
+	}
+	if !strings.Contains(s, "selector missed") {
+		t.Errorf("want the selector named as the problem:\n%s", s)
+	}
+	if !strings.Contains(s, "1 ready") {
+		t.Errorf("want the ready count, so the mismatch is visible:\n%s", s)
 	}
 }
 
