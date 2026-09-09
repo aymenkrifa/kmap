@@ -116,8 +116,11 @@ table, so forwarding yours would send the flag twice.
 
 **An empty row explains itself.** Rather than a single grey `absent`, kmap asks
 the namespace what it knows and distinguishes `scaled to 0` (deployment exists,
-zero replicas wanted), `no pods` (replicas wanted, none running) and
-`not deployed` (no such deployment). That extra `get deploy` happens only for
+zero replicas wanted), `no pods` (replicas wanted, none running),
+`not deployed` (no such deployment) and `selector missed` — the deployment has
+ready replicas, but none of them carry the labels the selector asked for, so
+the fault is in your `selector:` rather than in the cluster. REASON shows how
+many pods were running but unmatched. That extra `get deploy` happens only for
 namespaces that actually have an unexplained empty row.
 
 ### `kmap logs`
