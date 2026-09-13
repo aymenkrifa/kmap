@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kmap — your services, your names, every cluster</title>
+<meta name="description" content="map the names you actually say onto the workloads kubernetes actually runs. one table, every environment, every namespace.">
+<link rel="canonical" href="https://kmap.aymenkrifa.com/">
+<!-- an svg icon alone is enough for desktop chrome but not for the google app,
+     android webview, or ios, which need a raster or a manifest entry -->
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" type="image/svg+xml" href="assets/kmap-icon.svg">
+<link rel="apple-touch-icon" href="assets/kmap-icon-180.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#0D1017">
+<meta property="og:title" content="kmap">
+<meta property="og:description" content="your services, your names, every cluster">
+<meta property="og:image" content="https://kmap.aymenkrifa.com/assets/kmap-social-preview.png">
+<meta property="og:url" content="https://kmap.aymenkrifa.com/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  /* slate ground is the atlas the map is drawn on — dark is always the
+     default, light is the exception. violet is the name you say, cyan the
+     thing it resolves to, amber the row that is deliberately empty. */
+  :root{
+    --bg:#0D1017; --panel:#141926; --ink:#E6E3DB;
+    --violet:#A78BFA; --cyan:#5EEAD4; --amber:#F2B94B; --red:#FF5C57; --ash:#7C839A;
+    --line:rgba(124,131,154,.42);
+    --glow:rgba(167,139,250,.16);
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --sans:'IBM Plex Sans',system-ui,sans-serif;
+    color-scheme:dark;
+  }
+  /* light surface — ink on paper; violet and cyan deepen to hold contrast */
+  :root[data-theme=light]{
+    --bg:#F4F2ED; --panel:#FFFFFF; --ink:#161A22;
+    --violet:#6D4AE0; --cyan:#0E8F7E; --amber:#A9750E; --red:#D6362F; --ash:#5B6274;
+    --line:rgba(91,98,116,.38);
+    --glow:rgba(109,74,224,.085);
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme=dark]){
+      --bg:#F4F2ED; --panel:#FFFFFF; --ink:#161A22;
+      --violet:#6D4AE0; --cyan:#0E8F7E; --amber:#A9750E; --red:#D6362F; --ash:#5B6274;
+      --line:rgba(91,98,116,.38);
+      --glow:rgba(109,74,224,.085);
+      color-scheme:light;
+    }
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  /* the page is sized to land in one frame — vertical rhythm is viewport
+     relative, so it breathes on a tall screen and tightens on a short one
+     rather than pushing the footer past the fold. */
+  body{background:var(--bg);color:var(--ink);font-family:var(--mono);
+       background-image:radial-gradient(ellipse 1000px 520px at 50% -70px,
+           var(--glow) 0%, transparent 72%);
+       background-repeat:no-repeat;
+       font-size:16px;line-height:1.7;
+       padding:clamp(10px,2vh,28px) 20px clamp(10px,1.7vh,30px);
+       min-height:100vh;display:flex;
+       -webkit-font-smoothing:antialiased}
+  /* wider than reaper's 760: the pods table is 93 monospace columns wide and
+     the DOCS url is the last of them, so the page is cut to the demo */
+  .page{max-width:880px;margin:auto;width:100%}
+
+  /* ---- masthead ---- */
+  .masthead{display:flex;justify-content:space-between;align-items:center;gap:16px;
+       font-size:12.5px;letter-spacing:.04em;color:var(--ash);
+       border-bottom:1px solid var(--line);padding-bottom:9px}
+  .masthead a{color:var(--ash);text-decoration:none}
+  .masthead a:hover{color:var(--violet)}
+  /* the toggle's face is drawn by script; hidden until then so a page with
+     javascript off shows no empty, inert button in the masthead */
+  .sky-toggle{font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;
+       color:var(--ash);background:none;border:none;cursor:pointer;padding:0;
+       display:none;align-items:center;gap:7px;line-height:1}
+  .sky-toggle.ready{display:inline-flex}
+  .sky-toggle svg{flex:none;display:block}
+  .sky-toggle:hover{color:var(--violet)}
+
+  /* ---- hero ---- */
+  .hero{text-align:center;padding:clamp(10px,2.9vh,44px) 0 clamp(8px,2vh,30px)}
+  /* drive the lockup off height — the aspect is fixed, so this caps the
+     vertical budget directly instead of inferring it from the width */
+  .hero img{height:clamp(38px,8.6vh,78px);width:auto;max-width:84%}
+  .hero p{color:var(--ash);font-size:14.5px;margin-top:clamp(8px,1.6vh,16px)}
+  /* the lockup ships in two cuts; show the one that suits the sky */
+  .logo-light{display:none}
+  :root[data-theme=light] .logo-light{display:inline}
+  :root[data-theme=light] .logo-dark{display:none}
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme=dark]) .logo-light{display:inline}
+    :root:not([data-theme=dark]) .logo-dark{display:none}
+  }
+
+  /* ---- panel grammar ----
+     every branded surface is a panel: thin ash border with the title notched
+     into the top edge, the same shape reaper uses. */
+  .panel{position:relative;border:1px solid var(--line);background:var(--panel);
+       margin-top:clamp(15px,3.4vh,46px);padding:clamp(13px,2.5vh,27px) 24px clamp(12px,2.2vh,25px)}
+  .panel > .title{position:absolute;top:0;left:18px;transform:translateY(-50%);
+       background:var(--bg);padding:0 10px;font-size:12.5px;letter-spacing:.06em;
+       color:var(--ash)}
+  .panel > .title b{color:var(--violet);font-weight:700}
+  .panel .note{font-family:var(--sans);font-size:14px;color:var(--ash);
+       margin-top:clamp(9px,1.6vh,16px);line-height:1.6;opacity:.88}
+  .panel .note code{font-family:var(--mono);font-size:.9em;color:var(--ink)}
+
+  /* ---- why ----
+     the argument, in the sans face so it reads as prose rather than output.
+     'your' wears the violet the ALIAS column wears: it is the same claim. */
+  .why{font-family:var(--sans);font-size:15px;line-height:1.62;color:var(--ash)}
+  .why b{color:var(--violet);font-weight:500}
+  .why em{color:var(--ink);font-style:normal}
+  .why code{font-family:var(--mono);font-size:.88em;color:var(--ink)}
+
+  /* ---- the pods render ----
+     cells are inline-blocks measured in ch rather than padded with spaces, so
+     a cell can be empty during the animation without the column shifting */
+  .tui{font-size:13.5px;line-height:clamp(20px,2.85vh,29px);overflow-x:auto;
+       background:var(--bg);border:1px solid var(--line);border-radius:2px;
+       padding:clamp(8px,1.2vh,13px) clamp(12px,1.6vw,18px)}
+  .tui .ln{display:block;white-space:pre}
+  .tui .c{display:inline-block;vertical-align:top}
+  .tui .c1{width:8ch}   /* ALIAS    */
+  .tui .c2{width:12ch}  /* WORKLOAD */
+  .tui .c3{width:7ch}   /* READY    */
+  .tui .c4{width:13ch}  /* STATUS   */
+  .tui .c5{width:10ch}  /* REASON   */
+  .tui .c6{width:10ch}  /* RESTARTS */
+  .tui .c7{width:5ch}   /* AGE      */
+  .tui .c8{width:auto}  /* DOCS     */
+  /* the run header and the column header are chrome, held back in ash */
+  .tui .meta,.tui .hdr{color:var(--ash)}
+  .tui .hdr{font-weight:500}
+  /* the alias is the name you say; the workload is what the cluster calls it */
+  .tui .alias{color:var(--violet);font-weight:500}
+  .tui .wl{color:var(--ash)}
+  .tui .ok{color:var(--cyan)}
+  .tui .warn{color:var(--amber)}
+  .tui .docs{color:var(--cyan);text-decoration:underline;text-underline-offset:2px}
+  .tui .dash{color:var(--ash);opacity:.55}
+
+  /* the animation is opt-in: the markup above is the finished table, so the
+     panel is correct with javascript off. the script adds .anim, which hides
+     what it is about to paint. */
+  .tui.anim .row{opacity:0;transition:opacity .11s linear}
+  .tui.anim .row.in{opacity:1}
+  /* the two cells that are the whole point: blank first, then the reason */
+  .tui.anim .pend{opacity:0;transition:opacity .2s ease}
+  .tui.anim.resolved .pend{opacity:1}
+  @media (prefers-reduced-motion:reduce){
+    .tui .row,.tui .pend{transition:none}
+  }
+
+  /* ---- install ---- */
+  .cmd-wrap{display:flex;align-items:stretch;gap:14px}
+  .cmd{font-size:14px;line-height:clamp(20px,2.6vh,28px);overflow-x:auto;white-space:pre;flex:1;min-width:0}
+  .cmd .prompt{color:var(--violet);user-select:none}
+  /* a real button, not selectable text: a bordered chip with a proper tap
+     target, no long-press callout or text selection, no tap-highlight flash */
+  .copy{font-family:var(--mono);font-size:12.5px;color:var(--ash);background:none;
+       border:1px solid var(--line);border-radius:3px;cursor:pointer;
+       padding:2px 9px;align-self:center;flex:none;white-space:nowrap;
+       -webkit-user-select:none;-moz-user-select:none;user-select:none;
+       -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
+       touch-action:manipulation}
+  .copy:hover{color:var(--violet);border-color:var(--violet)}
+  .copy:active{transform:translateY(1px)}
+  .copy[data-state=done]{color:var(--cyan);border-color:var(--cyan)}
+  .copy[data-state=fail]{color:var(--red);border-color:var(--red)}
+
+  footer{text-align:center;color:var(--ash);font-size:12.5px;margin-top:clamp(14px,3.2vh,46px)}
+  footer a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--violet);border-bottom-color:var(--violet)}
+
+  /* short windows: the vh floors above stop shrinking to keep type legible,
+     so step the type down a notch rather than let the footer slip past the
+     fold. desktop only — phones would rather scroll than squint. */
+  @media (max-height:800px) and (min-width:880px){
+    .hero{padding:clamp(8px,2.4vh,32px) 0 clamp(7px,1.75vh,24px)}
+    .hero img{height:clamp(34px,7.9vh,70px)}
+    .hero p{font-size:13.5px;margin-top:clamp(7px,1.35vh,14px)}
+    .panel{margin-top:clamp(12px,2.95vh,38px);padding:clamp(11px,2.3vh,24px) 22px clamp(10px,2.05vh,22px)}
+    .why{font-size:14.5px;line-height:1.55}
+    .panel .note{font-size:13px;margin-top:clamp(8px,1.45vh,14px)}
+    .tui{font-size:13px;line-height:clamp(18px,2.75vh,26px)}
+    .cmd{font-size:13px;line-height:clamp(18px,2.6vh,26px)}
+    footer{margin-top:clamp(12px,2.7vh,34px)}
+  }
+
+  /* very short desktop windows: a half-height browser still deserves the
+     whole page in one frame, and unlike a phone it is not being read at
+     arm's length, so one more step down is the right trade. */
+  @media (max-height:660px) and (min-width:880px){
+    .hero{padding:clamp(5px,1.2vh,16px) 0 clamp(5px,1vh,14px)}
+    .hero img{height:clamp(28px,5.8vh,54px)}
+    .hero p{font-size:12.5px;margin-top:clamp(5px,.9vh,10px)}
+    .panel{margin-top:clamp(9px,1.8vh,19px);padding:clamp(8px,1.5vh,15px) 20px clamp(7px,1.3vh,13px)}
+    .why{font-size:13px;line-height:1.5}
+    .panel .note{font-size:12.5px;margin-top:clamp(6px,1vh,10px)}
+    .tui{font-size:12px;line-height:clamp(15px,2.1vh,19px);padding:6px 12px}
+    .cmd{font-size:12.5px;line-height:clamp(15px,2vh,19px)}
+    footer{margin-top:clamp(8px,1.6vh,17px)}
+  }
+
+  /* narrow windows — phones, and the desktop windows too narrow to seat the
+     table. below the page's own 880px measure the table can't be seated, so
+     stop pretending the page is one fold: readability beats the one-frame fit.
+     the table keeps its own sideways scroll, so the page itself never scrolls
+     sideways. */
+  @media (max-width:879px){
+    body{padding:18px 18px 30px;min-height:0;display:block}
+    .page{margin:0 auto}
+    .hero{padding:28px 0 24px}
+    .hero img{height:52px}
+    .hero p{font-size:14px;margin-top:14px;line-height:1.6}
+    .panel{margin-top:38px;padding:20px 18px 18px}
+    .panel > .title{left:12px;font-size:12px}
+    .why{font-size:14.5px;line-height:1.65}
+    .panel .note{font-size:13.5px;margin-top:14px;line-height:1.65}
+    .tui{font-size:13px;line-height:23px}
+    /* wrap the command rather than clipping it mid-url */
+    .cmd{font-size:13.5px;line-height:24px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .cmd-wrap{flex-direction:column;gap:10px}
+    .copy{align-self:flex-start;font-size:13px;padding:5px 12px}
+    footer{margin-top:32px;font-size:12.5px;line-height:1.7}
+  }
+</style>
+<script>
+  // apply a pinned sky before first paint so there's no flash.
+  (function(){
+    try {
+      var t = localStorage.getItem('kmap-theme');
+      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+    } catch (e) { /* storage blocked — follow the system preference */ }
+  })();
+</script>
+</head>
+<body>
+<div class="page">
+
+  <div class="masthead">
+    <span><a href="https://github.com/aymenkrifa/kmap" target="_blank" rel="noopener noreferrer">github</a> · <a href="https://github.com/aymenkrifa/kmap/releases" target="_blank" rel="noopener noreferrer" id="version">v0.1.0</a></span>
+    <button class="sky-toggle" id="sky-toggle" aria-label="toggle color scheme"></button>
+  </div>
+
+  <div class="hero">
+    <img class="logo-dark" src="assets/kmap-logo-dark.svg" alt="kmap" width="406" height="105">
+    <img class="logo-light" src="assets/kmap-logo-light.svg" alt="kmap" width="406" height="105">
+    <p>Your services, your names, every cluster.</p>
+  </div>
+
+  <div class="panel">
+    <div class="title"><b>01</b> · why</div>
+    <p class="why">The cluster client shows you the cluster. kmap shows you
+    <b>your</b> services — under your names, across every namespace, against
+    every environment, in one table. And the row with no pods tells you
+    <em>why</em> it has none.</p>
+  </div>
+
+  <div class="panel">
+    <div class="title"><b>02</b> · install</div>
+    <div class="cmd-wrap">
+      <div class="cmd"><span class="prompt">~$</span> <span id="install-cmd">curl -LsSf https://kmap.aymenkrifa.com/install.sh | sh</span></div>
+      <button class="copy" id="copy-btn" aria-label="copy install command">[copy]</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="title"><b>03</b> · kmap pods</div>
+    <!-- the finished table, written out in full; the script below replays it
+         row by row, so the panel still reads correctly with javascript off -->
+    <div class="tui" id="tui"><span class="ln meta">local — 5 alias(es)  <span id="clock">22:08:45</span></span><span class="ln"> </span><span class="ln hdr"><span class="c c1">ALIAS</span><span class="c c2">WORKLOAD</span><span class="c c3">READY</span><span class="c c4">STATUS</span><span class="c c5">REASON</span><span class="c c6">RESTARTS</span><span class="c c7">AGE</span><span class="c c8">DOCS</span></span><span class="ln row"><span class="c c1 alias">api</span><span class="c c2 wl">api-server</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">3h</span><span class="c c8 docs">https://api.example.com/docs</span></span><span class="ln row"><span class="c c1 alias">auth</span><span class="c c2 wl">auth</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">2</span><span class="c c7">2d</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">worker</span><span class="c c2 wl">worker</span><span class="c c3">0/1</span><span class="c c4 warn pend">Pending</span><span class="c c5 warn pend">Init:1/2</span><span class="c c6">0</span><span class="c c7">4m</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">queue</span><span class="c c2 wl">queue</span><span class="c c3 dash">—</span><span class="c c4 warn pend">scaled to 0</span><span class="c c5 dash pend">—</span><span class="c c6 dash">—</span><span class="c c7 dash">—</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">cache</span><span class="c c2 wl">cache</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">9d</span><span class="c c8 dash">—</span></span></div>
+    <p class="note">an empty row is a question, so kmap answers it: it asks the
+    namespace and comes back with <code>scaled to 0</code>, <code>no pods</code>,
+    <code>not deployed</code> or <code>selector missed</code> — never a blank.</p>
+  </div>
+
+  <footer>made by <a href="https://aymenkrifa.com" target="_blank" rel="noopener noreferrer">aymen krifa</a>, built with go — it drives the <a href="https://kubernetes.io/docs/reference/kubectl/" target="_blank" rel="noopener noreferrer">kubectl</a> you already have.</footer>
+</div>
+<script>
+  (function(){
+    var btn = document.getElementById('sky-toggle');
+    var mq = matchMedia('(prefers-color-scheme: dark)');
+    function effective(){
+      return document.documentElement.dataset.theme || (mq.matches ? 'dark' : 'light');
+    }
+    // inline svg, not emoji: glyph coverage varies by device and falls back
+    // to tofu. stroke follows currentColor so it tracks the hover state.
+    var SUN  = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+               'stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+               '<circle cx="12" cy="12" r="4.2"/><path d="M12 1.8v2.4M12 19.8v2.4' +
+               'M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M1.8 12h2.4M19.8 12h2.4' +
+               'M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>';
+    var MOON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+               'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+               'stroke-linejoin="round" aria-hidden="true">' +
+               '<path d="M20.8 13.1A8.6 8.6 0 1 1 10.9 3.2a6.7 6.7 0 0 0 9.9 9.9z"/></svg>';
+    function label(){
+      var dark = effective() === 'dark';
+      btn.innerHTML = (dark ? SUN : MOON) + '<span>' + (dark ? 'light' : 'dark') + '</span>';
+      btn.setAttribute('aria-label', dark ? 'switch to light' : 'switch to dark');
+      btn.classList.add('ready');
+    }
+    btn.addEventListener('click', function(){
+      var next = effective() === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem('kmap-theme', next); } catch (e) {}
+      label();
+    });
+    mq.addEventListener('change', label);
+    label();
+  })();
+
+  // replays a real `kmap pods` run. every string — the column order, the alias
+  // count, the two rows that come back empty — is the output in the readme,
+  // not invented. the beat that matters is the last one: the empty rows do not
+  // stay empty, they say why they are empty.
+  (function(){
+    var tui = document.getElementById('tui');
+    if (!tui) return;
+    var rows = [].slice.call(tui.querySelectorAll('.row'));
+    var clock = document.getElementById('clock');
+
+    var STEP = 140;   // between rows, as they print
+    var GAP  = 900;   // the pause before the empty rows explain themselves
+    var FADE = 200;   // how long that explanation takes to arrive
+    var HOLD = 6000;  // the finished table, held to be read
+    var OUT  = 260;   // the table clearing before the next refresh
+
+    var START = 22 * 3600 + 8 * 60 + 45; // 22:08:45, the readme's run
+    var secs = START, timers = [], ticker = null, running = false, inView = true;
+
+    function p2(n){ return (n < 10 ? '0' : '') + n; }
+    function hhmmss(s){
+      s = ((s % 86400) + 86400) % 86400;
+      return p2(Math.floor(s / 3600)) + ':' + p2(Math.floor(s / 60) % 60) + ':' + p2(s % 60);
+    }
+    function at(fn, ms){ timers.push(setTimeout(fn, ms)); }
+    function clearAll(){ timers.forEach(clearTimeout); timers = []; }
+
+    // one pass: clear, print the rows top to bottom, pause, then resolve
+    function cycle(lead){
+      clearAll();
+      rows.forEach(function(r){ r.classList.remove('in'); });
+      tui.classList.remove('resolved');
+      rows.forEach(function(r, i){ at(function(){ r.classList.add('in'); }, lead + i * STEP); });
+      var last = lead + (rows.length - 1) * STEP;
+      at(function(){ tui.classList.add('resolved'); }, last + GAP);
+      at(function(){ cycle(OUT); }, last + GAP + FADE + HOLD);
+    }
+
+    // the clock runs on, refresh after refresh — this is `kmap pods --watch`,
+    // so it never rewinds when the table repaints
+    function start(){
+      if (running) return;
+      running = true;
+      cycle(0);
+      ticker = setInterval(function(){ secs++; clock.textContent = hhmmss(secs); }, 1000);
+    }
+    function stop(){
+      running = false;
+      clearAll();
+      clearInterval(ticker);
+      ticker = null;
+    }
+
+    // honour reduced-motion: show the finished table, never loop, never tick
+    var rm = matchMedia('(prefers-reduced-motion: reduce)');
+    function apply(){
+      stop();
+      if (rm.matches) {
+        tui.classList.remove('anim');
+        tui.classList.add('resolved');
+        rows.forEach(function(r){ r.classList.add('in'); });
+        clock.textContent = hhmmss(START);
+        return;
+      }
+      tui.classList.add('anim');
+      if (inView && !document.hidden) start();
+    }
+    rm.addEventListener('change', apply);
+
+    // don't animate to an empty room: play only while the panel is on screen
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function(es){
+        es.forEach(function(e){
+          inView = e.intersectionRatio >= 0.4;
+          if (rm.matches) return;
+          if (inView && !document.hidden) start(); else stop();
+        });
+      }, {threshold: [0, 0.4]}).observe(tui);
+    }
+    document.addEventListener('visibilitychange', function(){
+      if (rm.matches) return;
+      if (document.hidden) stop();
+      else if (inView) start();
+    });
+
+    apply();
+  })();
+
+  // the version in the markup is a fallback; refresh it from the releases api
+  // so cutting a tag updates the site without a redeploy. cached for an hour —
+  // well under the api's 60-per-hour limit, but short enough that a fresh
+  // release shows on its own. any failure at all leaves the markup alone.
+  (function(){
+    try {
+      var el = document.getElementById('version');
+      if (!el || !window.fetch) return;
+      var KEY = 'kmap-latest-release';
+      var TTL = 3600000; // 1 hour
+
+      function show(tag, url){
+        if (!tag) return;
+        el.textContent = tag;
+        if (url) el.href = url;
+      }
+
+      try {
+        var hit = JSON.parse(localStorage.getItem(KEY) || 'null');
+        if (hit && Date.now() - hit.at < TTL && hit.tag) { show(hit.tag, hit.url); return; }
+      } catch (e) { /* unparseable cache — fall through and refetch */ }
+
+      fetch('https://api.github.com/repos/aymenkrifa/kmap/releases/latest',
+            {headers: {'Accept': 'application/vnd.github+json'}})
+        .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(d){
+          if (!d || !d.tag_name) return;
+          show(d.tag_name, d.html_url);
+          try {
+            localStorage.setItem(KEY, JSON.stringify({tag: d.tag_name, url: d.html_url, at: Date.now()}));
+          } catch (e) {}
+        })
+        .catch(function(){ /* offline, rate-limited, or no release — keep the fallback */ });
+    } catch (e) { /* never let the masthead take the page down */ }
+  })();
+
+  (function(){
+    var btn = document.getElementById('copy-btn');
+    var cmd = document.getElementById('install-cmd');
+    var timer;
+    function flash(state, text){
+      clearTimeout(timer);
+      btn.dataset.state = state;
+      btn.textContent = text;
+      timer = setTimeout(function(){
+        btn.removeAttribute('data-state');
+        btn.textContent = '[copy]';
+      }, 1600);
+    }
+    // execCommand is deprecated but it is the only path that copies outside a
+    // secure context (file://, plain http), so it backs up the clipboard api
+    // rather than making the user press the keys themselves.
+    function legacyCopy(text){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      var sel = document.getSelection();
+      var prev = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      var ok = false;
+      try {
+        ta.select();
+        ta.setSelectionRange(0, text.length); // ios needs the explicit range
+        ok = document.execCommand('copy');
+      } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      // don't clobber whatever the reader had selected
+      if (prev && sel) { sel.removeAllRanges(); sel.addRange(prev); }
+      return ok;
+    }
+
+    // last resort: put the command on screen selected, so ctrl+c works
+    function offerManual(){
+      try {
+        var r = document.createRange();
+        r.selectNodeContents(cmd);
+        var s2 = getSelection();
+        s2.removeAllRanges();
+        s2.addRange(r);
+        flash('fail', '[press ⌘/ctrl+c]');
+      } catch (e) {
+        flash('fail', '[copy failed]');
+      }
+    }
+
+    function fallback(text){
+      if (legacyCopy(text)) flash('done', '[copied]');
+      else offerManual();
+    }
+
+    btn.addEventListener('click', function(){
+      var text = cmd.textContent.trim();
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text)
+          .then(function(){ flash('done', '[copied]'); })
+          .catch(function(){ fallback(text); });
+      } else {
+        fallback(text);
+      }
+    });
+  })();
+</script>
+</body>
+</html>
