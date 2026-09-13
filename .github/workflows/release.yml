@@ -1,0 +1,59 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          out="kmap_${GITHUB_REF_NAME}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/$out"
+          go build -ldflags "-s -w -X github.com/aymenkrifa/kmap/cmd.version=${GITHUB_REF_NAME}" -o "dist/$out/kmap" .
+          cp README.md LICENSE "dist/$out/"
+          tar -C dist -czf "dist/$out.tar.gz" "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # One checksums.txt covering every tarball, in the plain sha256sum
+      # format the installer parses with awk on the filename column.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
