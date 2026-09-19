@@ -246,6 +246,13 @@ existing config.
 `kmap completion zsh|bash|fish` writes a completion script to stdout,
 completing kmap's own commands and flags.
 
+### `kmap version`
+
+Print the version and nothing else — a bare string on one line, no banner, so
+the installer can compare it against the release tag and the site can show it
+verbatim. Release binaries carry the tag injected at link time; anything built
+from source falls back to Go's build info, and `dev` when even that is absent.
+
 ## Configuration
 
 One YAML file. Looked up in this order:
