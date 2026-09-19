@@ -1,4 +1,12 @@
+<div align="center">
+  <img src="docs/assets/kmap-banner.svg" alt="kmap — your services, your names, every cluster" width="820">
+  <p><a href="https://kmap.aymenkrifa.com"><b>kmap.aymenkrifa.com</b></a></p>
+</div>
+
 # kmap
+
+![Workflow](https://github.com/aymenkrifa/kmap/actions/workflows/ci.yml/badge.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Your services, your names, every cluster.**
 
@@ -26,17 +34,26 @@ that has no pods says *why* it has none.
 
 ## Install
 
-Requires Go 1.26 or newer.
+**Quick install** (no Go needed — fetches the right binary for your machine,
+verifies it against the published checksum, and drops it in `~/.local/bin`):
+
+```sh
+curl -LsSf https://kmap.aymenkrifa.com/install.sh | sh
+```
+
+Linux and macOS, amd64 and arm64. Re-run it any time to update.
+
+**With Go** (1.26 or newer):
+
+```sh
+go install github.com/aymenkrifa/kmap@latest
+```
+
+**From source:**
 
 ```sh
 git clone https://github.com/aymenkrifa/kmap && cd kmap
 go build -o ~/.local/bin/kmap .
-```
-
-Or, with read access to the repo:
-
-```sh
-go install github.com/aymenkrifa/kmap@latest
 ```
 
 ## Quick start
