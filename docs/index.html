@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kmap — your services, your names, every cluster</title>
+<meta name="description" content="map the names you actually say onto the workloads kubernetes actually runs. one table, every environment, every namespace.">
+<link rel="canonical" href="https://kmap.aymenkrifa.com/">
+<!-- an svg icon alone is enough for desktop chrome but not for the google app,
+     android webview, or ios, which need a raster or a manifest entry -->
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" type="image/svg+xml" href="assets/kmap-icon.svg">
+<link rel="apple-touch-icon" href="assets/kmap-icon-180.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#0D1017">
+<meta property="og:title" content="kmap">
+<meta property="og:description" content="your services, your names, every cluster">
+<meta property="og:image" content="https://kmap.aymenkrifa.com/assets/kmap-social-preview.png">
+<meta property="og:url" content="https://kmap.aymenkrifa.com/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  /* slate ground is the atlas the map is drawn on — dark is always the
+     default, light is the exception. violet is the name you say, cyan the
+     thing it resolves to, amber the row that is deliberately empty, red the
+     row whose selector is wrong (and the environment you must not fumble). */
+  :root{
+    --bg:#0D1017; --panel:#141926; --ink:#E6E3DB;
+    --violet:#A78BFA; --cyan:#5EEAD4; --amber:#F2B94B; --red:#FF5C57; --ash:#7C839A;
+    --line:rgba(124,131,154,.42);
+    --hair:rgba(124,131,154,.20);
+    --glow:rgba(167,139,250,.16);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+    color-scheme:dark;
+  }
+  /* light surface — ink on paper; violet and cyan deepen to hold contrast */
+  :root[data-theme=light]{
+    --bg:#F4F2ED; --panel:#FFFFFF; --ink:#161A22;
+    --violet:#6D4AE0; --cyan:#0E8F7E; --amber:#A9750E; --red:#D6362F; --ash:#5B6274;
+    --line:rgba(91,98,116,.38);
+    --hair:rgba(91,98,116,.18);
+    --glow:rgba(109,74,224,.085);
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme=dark]){
+      --bg:#F4F2ED; --panel:#FFFFFF; --ink:#161A22;
+      --violet:#6D4AE0; --cyan:#0E8F7E; --amber:#A9750E; --red:#D6362F; --ash:#5B6274;
+      --line:rgba(91,98,116,.38);
+      --hair:rgba(91,98,116,.18);
+      --glow:rgba(109,74,224,.085);
+      color-scheme:light;
+    }
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--mono);
+       background-image:radial-gradient(ellipse 1100px 460px at 18% -60px,
+           var(--glow) 0%, transparent 70%);
+       background-repeat:no-repeat;
+       font-size:16px;line-height:1.7;
+       padding:22px 24px 44px;
+       -webkit-font-smoothing:antialiased}
+  /* the page is cut to the table: 106 monospace columns plus the frame's own
+     padding. everything else is narrower than this on purpose. */
+  .wrap{max-width:1040px;margin:0 auto}
+  a{color:inherit}
+  :focus-visible{outline:2px solid var(--violet);outline-offset:2px;border-radius:2px}
+
+  /* ---- masthead ---------------------------------------------------------
+     the wordmark is a label here, not a lockup: 22px, hard left, on the same
+     line as the links. the page's headline object is the table below. */
+  .masthead{display:flex;justify-content:space-between;align-items:center;gap:16px;
+       font-size:12.5px;letter-spacing:.04em;color:var(--ash);
+       border-bottom:1px solid var(--hair);padding-bottom:12px}
+  .masthead .brand{display:flex;align-items:center;line-height:0}
+  /* no display here: the two cuts below switch on it, and a rule with a
+     higher specificity would pin both of them visible */
+  .masthead .brand img{height:22px;width:auto}
+  .masthead nav{display:flex;align-items:center;gap:10px}
+  .masthead a{color:var(--ash);text-decoration:none}
+  .masthead a:hover{color:var(--violet)}
+  .sep{opacity:.5;user-select:none}
+  /* the toggle's face is drawn by script; hidden until then so a page with
+     javascript off shows no empty, inert button in the masthead */
+  .sky-toggle{font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;
+       color:var(--ash);background:none;border:none;cursor:pointer;padding:0;
+       display:none;align-items:center;gap:7px;line-height:1}
+  .sky-toggle.ready{display:inline-flex}
+  .sky-toggle svg{flex:none;display:block}
+  .sky-toggle:hover{color:var(--violet)}
+  /* the lockup ships in two cuts; show the one that suits the sky */
+  .logo-dark{display:block}
+  .logo-light{display:none}
+  :root[data-theme=light] .logo-light{display:block}
+  :root[data-theme=light] .logo-dark{display:none}
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme=dark]) .logo-light{display:block}
+    :root:not([data-theme=dark]) .logo-dark{display:none}
+  }
+
+  /* ---- lead -------------------------------------------------------------
+     two columns, both left-ranged: the claim, and the argument for it. no
+     centred hero — the table is what the eye is meant to land on. */
+  .lead{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);
+       gap:18px 48px;align-items:start;padding:34px 0 26px}
+  .lead h1{font-family:var(--mono);font-weight:500;font-size:clamp(20px,2.35vw,27px);
+       line-height:1.3;letter-spacing:-.012em;color:var(--ink)}
+  .lead h1 b{color:var(--violet);font-weight:500}
+  .why{font-family:var(--sans);font-size:15px;line-height:1.65;color:var(--ash);
+       max-width:62ch}
+  .why b{color:var(--violet);font-weight:500}
+  .why em{color:var(--ink);font-style:normal}
+
+  /* ---- the frame --------------------------------------------------------
+     a real terminal window rather than a decorative snippet: chrome bar with
+     the environment tabs, then the run. */
+  .frame{border:1px solid var(--line);border-radius:4px;background:var(--panel);
+       overflow:hidden}
+  .chrome{display:none;align-items:stretch;justify-content:space-between;gap:12px;
+       border-bottom:1px solid var(--hair);padding:0 12px 0 6px}
+  .frame.tabbed .chrome{display:flex}
+  .envbar{display:flex;align-items:stretch;gap:2px}
+  .envbar button{font-family:var(--mono);font-size:12.5px;letter-spacing:.035em;
+       color:var(--ash);background:none;border:0;border-bottom:2px solid transparent;
+       cursor:pointer;padding:11px 13px 9px;white-space:nowrap;
+       -webkit-tap-highlight-color:transparent;touch-action:manipulation}
+  .envbar button:hover{color:var(--ink)}
+  .envbar button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--violet)}
+  .envbar button[aria-selected=true][data-env=prod]{border-bottom-color:var(--red)}
+  .chrome .chip{align-self:center;font-size:11.5px;letter-spacing:.05em;color:var(--ash);
+       opacity:.75;white-space:nowrap}
+
+  /* ---- a run ------------------------------------------------------------ */
+  .run{--runpad:18px;padding:14px var(--runpad) 16px}
+  /* stacked, script-free: each run still says which environment it is */
+  .run + .run{border-top:1px solid var(--hair)}
+  .frame.tabbed .run{display:none}
+  .frame.tabbed .run.is-active{display:block}
+  .runhead{display:flex;justify-content:space-between;align-items:baseline;gap:18px;
+       font-size:13px;margin-bottom:10px}
+  .cmdline{color:var(--ink)}
+  .cmdline .pr{color:var(--violet);user-select:none}
+  .bind{color:var(--ash);font-size:11.5px;letter-spacing:.05em;white-space:nowrap;opacity:.8}
+
+  /* ---- the table --------------------------------------------------------
+     cells are inline-blocks measured in ch rather than padded with spaces, so
+     a cell can be empty while it resolves without the column shifting. every
+     column is sized to the widest value across all three environments, so
+     switching environment never reflows the grid — which is the point: the
+     ALIAS column stays exactly where it was. */
+  /* the lines bleed past the run's padding so a marked row's band reaches
+     the frame's edges; the padding moves onto the line itself, which keeps
+     the text where it was. */
+  .tui{font-size:13.5px;line-height:26px;overflow-x:auto;color:var(--ink);
+       margin:0 calc(-1 * var(--runpad))}
+  .tui .ln{display:block;white-space:pre;width:max-content;min-width:100%;
+       padding:0 var(--runpad)}
+  .tui .c{display:inline-block;vertical-align:top}
+  .tui .c1{width:8ch}   /* ALIAS    */
+  .tui .c2{width:13ch}  /* WORKLOAD */
+  .tui .c3{width:7ch}   /* READY    */
+  .tui .c4{width:17ch}  /* STATUS   */
+  .tui .c5{width:13ch}  /* REASON   */
+  .tui .c6{width:10ch}  /* RESTARTS */
+  .tui .c7{width:5ch}   /* AGE      */
+  .tui .c8{width:auto}  /* DOCS     */
+  .tui .meta,.tui .hdr{color:var(--ash)}
+  .tui .meta b{color:var(--ink);font-weight:700}
+  .tui .prot{color:var(--red)}
+  .tui .hdr{font-weight:500}
+  /* the alias is the name you say; the workload is what the cluster calls it */
+  .tui .alias{color:var(--violet);font-weight:500}
+  .tui .wl{color:var(--ash)}
+  .tui .ok{color:var(--cyan)}
+  .tui .warn{color:var(--amber)}
+  .tui .miss{color:var(--red)}
+  .tui .docs{color:var(--cyan);text-decoration:underline;text-underline-offset:2px}
+  .tui .dash{color:var(--ash);opacity:.55}
+  /* the rows the annotation is about, marked in place rather than described
+     somewhere else on the page */
+  .tui .row.explained{--mark:var(--amber)}
+  .tui .row.explained.miss{--mark:var(--red)}
+  .tui .row.explained{background:color-mix(in srgb, var(--mark) 9%, transparent);
+       box-shadow:inset 2px 0 0 var(--mark)}
+
+  /* the animation is opt-in: the markup is the finished table, so the frame is
+     correct with javascript off. script adds .anim, which hides what it is
+     about to paint. */
+  .frame.anim .row{opacity:0}
+  .frame.anim .row.in{opacity:1;transition:opacity .12s linear}
+  .frame.anim .pend{opacity:0;transition:opacity .2s ease}
+  .frame.anim .run.resolved .pend{opacity:1}
+  @media (prefers-reduced-motion:reduce){
+    .frame .row,.frame .pend{transition:none !important}
+  }
+
+  /* ---- the annotation ---------------------------------------------------
+     hung off the frame and indented to the STATUS column, so the elbow points
+     at the cells it is talking about rather than at the page. */
+  .annot{font-family:var(--mono);font-size:13.5px;line-height:1.62;color:var(--ash);
+       padding:10px 0 0 calc(19px + 28ch);max-width:100%}
+  .annot .el{opacity:.55;user-select:none}
+  .annot .warn{color:var(--amber)}
+  .annot .miss{color:var(--red)}
+  .annot code{font-family:var(--mono);color:var(--ink)}
+
+  /* ---- install ----------------------------------------------------------
+     a strip, not a centrepiece: one bordered line under the table. */
+  .install{display:flex;align-items:center;gap:16px;margin-top:36px;
+       border:1px solid var(--line);border-radius:4px;background:var(--panel);
+       padding:13px 16px}
+  .cmd{font-size:14px;line-height:1.6;overflow-x:auto;white-space:pre;flex:1;min-width:0}
+  .cmd .pr{color:var(--violet);user-select:none}
+  /* a real button, not selectable text: a bordered chip with a proper tap
+     target, no long-press callout or text selection, no tap-highlight flash */
+  .copy{font-family:var(--mono);font-size:12.5px;color:var(--ash);background:none;
+       border:1px solid var(--line);border-radius:3px;cursor:pointer;
+       padding:3px 10px;flex:none;white-space:nowrap;
+       -webkit-user-select:none;-moz-user-select:none;user-select:none;
+       -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
+       touch-action:manipulation}
+  .copy:hover{color:var(--violet);border-color:var(--violet)}
+  .copy:active{transform:translateY(1px)}
+  .copy[data-state=done]{color:var(--cyan);border-color:var(--cyan)}
+  .copy[data-state=fail]{color:var(--red);border-color:var(--red)}
+  .next{font-family:var(--sans);font-size:13.5px;color:var(--ash);margin-top:11px}
+  .next code{font-family:var(--mono);font-size:.9em;color:var(--ink)}
+
+  footer{color:var(--ash);font-size:12.5px;line-height:1.7;margin-top:40px;
+       border-top:1px solid var(--hair);padding-top:14px}
+  footer a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--violet);border-bottom-color:var(--violet)}
+
+  /* ---- narrower ---------------------------------------------------------
+     the table keeps its own sideways scroll, so the page itself never scrolls
+     sideways at any width. */
+  @media (max-width:860px){
+    .lead{grid-template-columns:1fr;gap:14px;padding:28px 0 22px}
+    .why{font-size:14.5px}
+    .annot{padding-left:0;font-size:13px}
+  }
+  /* the chip is a hint about the tabs, not content — it goes before the tabs
+     are squeezed */
+  @media (max-width:780px){
+    .chip{display:none}
+  }
+  @media (max-width:620px){
+    body{padding:18px 16px 36px}
+    .lead{padding:24px 0 18px}
+    .bind{display:none}
+    .tui{font-size:12.5px;line-height:24px}
+    .runhead{font-size:12.5px}
+    .run{--runpad:14px;padding:12px var(--runpad) 14px}
+    .envbar button{padding:10px 10px 8px;font-size:12px}
+    .install{flex-direction:column;align-items:stretch;gap:11px;margin-top:28px}
+    /* wrap the command rather than clipping it mid-url */
+    .cmd{font-size:13.5px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .copy{align-self:flex-start;font-size:13px;padding:5px 12px}
+    .annot{font-size:12.5px}
+  }
+</style>
+<script>
+  // apply a pinned sky before first paint so there's no flash.
+  (function(){
+    try {
+      var t = localStorage.getItem('kmap-theme');
+      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+    } catch (e) { /* storage blocked — follow the system preference */ }
+  })();
+</script>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <span class="brand">
+      <img class="logo-dark" src="assets/kmap-logo-dark.svg" alt="kmap" width="406" height="105">
+      <img class="logo-light" src="assets/kmap-logo-light.svg" alt="kmap" width="406" height="105">
+    </span>
+    <nav>
+      <a href="https://github.com/aymenkrifa/kmap" target="_blank" rel="noopener noreferrer">github</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/aymenkrifa/kmap/releases" target="_blank" rel="noopener noreferrer" id="version">v0.1.0</a>
+      <span class="sep">·</span>
+      <button class="sky-toggle" id="sky-toggle" aria-label="toggle color scheme"></button>
+    </nav>
+  </header>
+
+  <section class="lead">
+    <h1>Your services, <b>your names</b>, every cluster.</h1>
+    <p class="why">The cluster client shows you the cluster. kmap shows you
+    <b>your</b> services — under your names, across every namespace, against
+    every environment, in one table. And the row with no pods tells you
+    <em>why</em> it has none.</p>
+  </section>
+
+  <div class="frame" id="frame">
+    <div class="chrome">
+      <div class="envbar" id="envbar" role="tablist" aria-label="environment"></div>
+      <span class="chip">same aliases · three clusters</span>
+    </div>
+    <div class="runs" id="runs">
+      <section class="run" data-env="local" id="run-local">
+        <div class="runhead">
+          <span class="cmdline"><span class="pr">$</span> kmap pods</span>
+          <span class="bind">command: klocal</span>
+        </div>
+        <div class="tui"><span class="ln meta"><b>local</b> — 5 alias(es)  <span class="clock">22:08:45</span></span><span class="ln"> </span><span class="ln hdr"><span class="c c1 alias">ALIAS</span><span class="c c2 wl">WORKLOAD</span><span class="c c3">READY</span><span class="c c4">STATUS</span><span class="c c5">REASON</span><span class="c c6">RESTARTS</span><span class="c c7">AGE</span><span class="c c8">DOCS</span></span><span class="ln row"><span class="c c1 alias">api</span><span class="c c2 wl">api-server</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">3h</span><span class="c c8 docs">https://api.example.com/docs</span></span><span class="ln row"><span class="c c1 alias">auth</span><span class="c c2 wl">auth</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">2</span><span class="c c7">2d</span><span class="c c8 dash">—</span></span><span class="ln row explained"><span class="c c1 alias">worker</span><span class="c c2 wl">worker</span><span class="c c3">0/1</span><span class="c c4 warn pend">Pending</span><span class="c c5 warn pend">Init:1/2</span><span class="c c6">0</span><span class="c c7">4m</span><span class="c c8 dash">—</span></span><span class="ln row explained"><span class="c c1 alias">queue</span><span class="c c2 wl">queue</span><span class="c c3 dash">—</span><span class="c c4 warn pend">scaled to 0</span><span class="c c5 dash pend">—</span><span class="c c6 dash">—</span><span class="c c7 dash">—</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">cache</span><span class="c c2 wl">cache</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">9d</span><span class="c c8 dash">—</span></span></div>
+      </section>
+      <section class="run" data-env="staging" id="run-staging">
+        <div class="runhead">
+          <span class="cmdline"><span class="pr">$</span> kmap pods staging</span>
+          <span class="bind">context: Staging</span>
+        </div>
+        <div class="tui"><span class="ln meta"><b>staging</b> — 5 alias(es)  <span class="clock">22:08:45</span></span><span class="ln"> </span><span class="ln hdr"><span class="c c1 alias">ALIAS</span><span class="c c2 wl">WORKLOAD</span><span class="c c3">READY</span><span class="c c4">STATUS</span><span class="c c5">REASON</span><span class="c c6">RESTARTS</span><span class="c c7">AGE</span><span class="c c8">DOCS</span></span><span class="ln row"><span class="c c1 alias">api</span><span class="c c2 wl">backend</span><span class="c c3">2/2</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">6d</span><span class="c c8 docs">https://api.stg.example.com/docs</span></span><span class="ln row"><span class="c c1 alias">auth</span><span class="c c2 wl">auth-svc</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">6d</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">worker</span><span class="c c2 wl">worker</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">6d</span><span class="c c8 dash">—</span></span><span class="ln row explained"><span class="c c1 alias">queue</span><span class="c c2 wl">queue</span><span class="c c3 dash">—</span><span class="c c4 warn pend">no pods</span><span class="c c5 dash pend">—</span><span class="c c6 dash">—</span><span class="c c7 dash">—</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">cache</span><span class="c c2 wl">redis</span><span class="c c3">1/1</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">1</span><span class="c c7">12d</span><span class="c c8 dash">—</span></span></div>
+      </section>
+      <section class="run" data-env="prod" id="run-prod">
+        <div class="runhead">
+          <span class="cmdline"><span class="pr">$</span> kmap pods prod</span>
+          <span class="bind">context: Production</span>
+        </div>
+        <div class="tui"><span class="ln meta"><b>prod</b> — 5 alias(es) <span class="prot">[protected]</span>  <span class="clock">22:08:45</span></span><span class="ln"> </span><span class="ln hdr"><span class="c c1 alias">ALIAS</span><span class="c c2 wl">WORKLOAD</span><span class="c c3">READY</span><span class="c c4">STATUS</span><span class="c c5">REASON</span><span class="c c6">RESTARTS</span><span class="c c7">AGE</span><span class="c c8">DOCS</span></span><span class="ln row"><span class="c c1 alias">api</span><span class="c c2 wl">api-gateway</span><span class="c c3">6/6</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">21d</span><span class="c c8 docs">https://api.prod.example.com/docs</span></span><span class="ln row"><span class="c c1 alias">auth</span><span class="c c2 wl">auth</span><span class="c c3">3/3</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">21d</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">worker</span><span class="c c2 wl">worker</span><span class="c c3">4/4</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">1</span><span class="c c7">9d</span><span class="c c8 dash">—</span></span><span class="ln row"><span class="c c1 alias">queue</span><span class="c c2 wl">queue</span><span class="c c3">2/2</span><span class="c c4 ok">Running</span><span class="c c5 dash">—</span><span class="c c6">0</span><span class="c c7">34d</span><span class="c c8 dash">—</span></span><span class="ln row explained miss"><span class="c c1 alias">cache</span><span class="c c2 wl">cache-redis</span><span class="c c3 dash">—</span><span class="c c4 miss pend">selector missed</span><span class="c c5 miss pend">3 unmatched</span><span class="c c6 dash">—</span><span class="c c7 dash">—</span><span class="c c8 dash">—</span></span></div>
+      </section>
+    </div>
+  </div>
+
+  <p class="annot"><span class="el">└─</span> a row that is not running says why. <span class="warn">Pending</span>
+  carries how far <code>Init</code> got; an empty row is asked about, and comes back
+  <span class="warn">scaled to 0</span>, <span class="warn">no pods</span>,
+  <span class="warn">not deployed</span> or <span class="miss">selector missed</span> — never a blank.</p>
+
+  <div class="install">
+    <div class="cmd"><span class="pr">~$</span> <span id="install-cmd">curl -LsSf https://kmap.aymenkrifa.com/install.sh | sh</span></div>
+    <button class="copy" id="copy-btn" aria-label="copy install command">[copy]</button>
+  </div>
+  <p class="next">then <code>kmap init</code> reads your kubeconfig, turns every context
+  into an environment, and marks anything named like production as protected.</p>
+
+  <footer>made by <a href="https://aymenkrifa.com" target="_blank" rel="noopener noreferrer">aymen krifa</a>, built with go — it drives the <a href="https://kubernetes.io/docs/reference/kubectl/" target="_blank" rel="noopener noreferrer">kubectl</a> you already have.</footer>
+</div>
+<script>
+  (function(){
+    var btn = document.getElementById('sky-toggle');
+    var mq = matchMedia('(prefers-color-scheme: dark)');
+    function effective(){
+      return document.documentElement.dataset.theme || (mq.matches ? 'dark' : 'light');
+    }
+    // inline svg, not emoji: glyph coverage varies by device and falls back
+    // to tofu. stroke follows currentColor so it tracks the hover state.
+    var SUN  = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+               'stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+               '<circle cx="12" cy="12" r="4.2"/><path d="M12 1.8v2.4M12 19.8v2.4' +
+               'M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M1.8 12h2.4M19.8 12h2.4' +
+               'M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>';
+    var MOON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+               'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+               'stroke-linejoin="round" aria-hidden="true">' +
+               '<path d="M20.8 13.1A8.6 8.6 0 1 1 10.9 3.2a6.7 6.7 0 0 0 9.9 9.9z"/></svg>';
+    function label(){
+      var dark = effective() === 'dark';
+      btn.innerHTML = (dark ? SUN : MOON) + '<span>' + (dark ? 'light' : 'dark') + '</span>';
+      btn.setAttribute('aria-label', dark ? 'switch to light' : 'switch to dark');
+      btn.classList.add('ready');
+    }
+    btn.addEventListener('click', function(){
+      var next = effective() === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem('kmap-theme', next); } catch (e) {}
+      label();
+    });
+    mq.addEventListener('change', label);
+    label();
+  })();
+
+  // ---- the environment switcher ----------------------------------------
+  // three real `kmap pods` runs against three clusters. the markup holds all
+  // three, stacked, so the page is complete with javascript off; script folds
+  // them into one frame and builds the tabs that switch between them. the
+  // column widths are fixed across all three, so switching moves everything
+  // except the column that is yours.
+  (function(){
+    var frame = document.getElementById('frame');
+    if (!frame) return;
+    var runs = [].slice.call(frame.querySelectorAll('.run'));
+    var bar  = document.getElementById('envbar');
+    if (!runs.length || !bar) return;
+
+    var FIRST = {step: 140, gap: 900};  // the first paint: unhurried, the beat reads
+    var SWAP  = {step: 55,  gap: 480};  // a switch: quick enough to feel like a click
+    var timers = [], tabs = [], active = 0;
+    var rm = matchMedia('(prefers-reduced-motion: reduce)');
+
+    function clearAll(){ timers.forEach(clearTimeout); timers = []; }
+
+    // paint one run: rows top to bottom, then — after a pause long enough to
+    // be a separate beat — the cells that had to be asked about.
+    function play(run, speed){
+      clearAll();
+      var rows = [].slice.call(run.querySelectorAll('.row'));
+      run.classList.remove('resolved');
+      rows.forEach(function(r){ r.classList.remove('in'); });
+      if (rm.matches) {
+        rows.forEach(function(r){ r.classList.add('in'); });
+        run.classList.add('resolved');
+        return;
+      }
+      rows.forEach(function(r, i){
+        timers.push(setTimeout(function(){ r.classList.add('in'); }, i * speed.step));
+      });
+      timers.push(setTimeout(function(){
+        run.classList.add('resolved');
+      }, (rows.length - 1) * speed.step + speed.gap));
+    }
+
+    function select(i, focus){
+      active = i;
+      runs.forEach(function(r, n){ r.classList.toggle('is-active', n === i); });
+      tabs.forEach(function(t, n){
+        t.setAttribute('aria-selected', n === i ? 'true' : 'false');
+        t.tabIndex = n === i ? 0 : -1;
+      });
+      if (focus) tabs[i].focus();
+      play(runs[i], focus === undefined ? FIRST : SWAP);
+    }
+
+    runs.forEach(function(run, i){
+      var name = run.dataset.env;
+      var tab = document.createElement('button');
+      tab.type = 'button';
+      tab.textContent = name;
+      tab.dataset.env = name;
+      tab.setAttribute('role', 'tab');
+      tab.id = 'tab-' + name;
+      tab.setAttribute('aria-controls', run.id);
+      tab.tabIndex = -1;
+      tab.addEventListener('click', function(){ select(i, false); });
+      bar.appendChild(tab);
+      tabs.push(tab);
+      run.setAttribute('role', 'tabpanel');
+      run.setAttribute('aria-labelledby', tab.id);
+      run.tabIndex = 0;
+    });
+
+    // arrow keys move between tabs, as a tablist should
+    bar.addEventListener('keydown', function(e){
+      var n = null;
+      if (e.key === 'ArrowRight') n = (active + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft') n = (active - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = tabs.length - 1;
+      if (n === null) return;
+      e.preventDefault();
+      select(n, true);
+    });
+
+    frame.classList.add('tabbed');
+
+    // the clock in every run header. it is the same wall clock across the
+    // three, because they are three views of one moment.
+    var clocks = [].slice.call(frame.querySelectorAll('.clock'));
+    var START = 22 * 3600 + 8 * 60 + 45; // 22:08:45, the readme's run
+    var secs = START, ticker = null;
+    function p2(n){ return (n < 10 ? '0' : '') + n; }
+    function hhmmss(s){
+      s = ((s % 86400) + 86400) % 86400;
+      return p2(Math.floor(s / 3600)) + ':' + p2(Math.floor(s / 60) % 60) + ':' + p2(s % 60);
+    }
+    function paintClock(){
+      var t = hhmmss(secs);
+      clocks.forEach(function(c){ c.textContent = t; });
+    }
+    function tickOn(){
+      if (ticker || rm.matches) return;
+      ticker = setInterval(function(){ secs++; paintClock(); }, 1000);
+    }
+    function tickOff(){ clearInterval(ticker); ticker = null; }
+
+    // reduced motion: the finished table, immediately, and a clock that holds
+    // still. re-evaluated if the preference changes mid-visit.
+    function apply(){
+      tickOff();
+      clearAll();
+      if (rm.matches) {
+        frame.classList.remove('anim');
+        secs = START;
+        paintClock();
+        runs.forEach(function(r){
+          r.classList.add('resolved');
+          [].forEach.call(r.querySelectorAll('.row'), function(x){ x.classList.add('in'); });
+        });
+        return;
+      }
+      frame.classList.add('anim');
+      play(runs[active], SWAP);
+      if (!document.hidden) tickOn();
+    }
+    rm.addEventListener('change', apply);
+    document.addEventListener('visibilitychange', function(){
+      if (document.hidden) tickOff(); else tickOn();
+    });
+
+    frame.classList.add('anim');
+    select(0);
+    if (rm.matches) apply(); else if (!document.hidden) tickOn();
+  })();
+
+  // the version in the markup is a fallback; refresh it from the releases api
+  // so cutting a tag updates the site without a redeploy. cached for an hour —
+  // well under the api's 60-per-hour limit, but short enough that a fresh
+  // release shows on its own. any failure at all leaves the markup alone.
+  (function(){
+    try {
+      var el = document.getElementById('version');
+      if (!el || !window.fetch) return;
+      var KEY = 'kmap-latest-release';
+      var TTL = 3600000; // 1 hour
+
+      function show(tag, url){
+        if (!tag) return;
+        el.textContent = tag;
+        if (url) el.href = url;
+      }
+
+      try {
+        var hit = JSON.parse(localStorage.getItem(KEY) || 'null');
+        if (hit && Date.now() - hit.at < TTL && hit.tag) { show(hit.tag, hit.url); return; }
+      } catch (e) { /* unparseable cache — fall through and refetch */ }
+
+      fetch('https://api.github.com/repos/aymenkrifa/kmap/releases/latest',
+            {headers: {'Accept': 'application/vnd.github+json'}})
+        .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(d){
+          if (!d || !d.tag_name) return;
+          show(d.tag_name, d.html_url);
+          try {
+            localStorage.setItem(KEY, JSON.stringify({tag: d.tag_name, url: d.html_url, at: Date.now()}));
+          } catch (e) {}
+        })
+        .catch(function(){ /* offline, rate-limited, or no release — keep the fallback */ });
+    } catch (e) { /* never let the masthead take the page down */ }
+  })();
+
+  (function(){
+    var btn = document.getElementById('copy-btn');
+    var cmd = document.getElementById('install-cmd');
+    if (!btn || !cmd) return;
+    var timer;
+    function flash(state, text){
+      clearTimeout(timer);
+      btn.dataset.state = state;
+      btn.textContent = text;
+      timer = setTimeout(function(){
+        btn.removeAttribute('data-state');
+        btn.textContent = '[copy]';
+      }, 1600);
+    }
+    // execCommand is deprecated but it is the only path that copies outside a
+    // secure context (file://, plain http), so it backs up the clipboard api
+    // rather than making the user press the keys themselves.
+    function legacyCopy(text){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      var sel = document.getSelection();
+      var prev = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      var ok = false;
+      try {
+        ta.select();
+        ta.setSelectionRange(0, text.length); // ios needs the explicit range
+        ok = document.execCommand('copy');
+      } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      // don't clobber whatever the reader had selected
+      if (prev && sel) { sel.removeAllRanges(); sel.addRange(prev); }
+      return ok;
+    }
+
+    // last resort: put the command on screen selected, so ctrl+c works
+    function offerManual(){
+      try {
+        var r = document.createRange();
+        r.selectNodeContents(cmd);
+        var s2 = getSelection();
+        s2.removeAllRanges();
+        s2.addRange(r);
+        flash('fail', '[press ⌘/ctrl+c]');
+      } catch (e) {
+        flash('fail', '[copy failed]');
+      }
+    }
+
+    function fallback(text){
+      if (legacyCopy(text)) flash('done', '[copied]');
+      else offerManual();
+    }
+
+    btn.addEventListener('click', function(){
+      var text = cmd.textContent.trim();
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text)
+          .then(function(){ flash('done', '[copied]'); })
+          .catch(function(){ fallback(text); });
+      } else {
+        fallback(text);
+      }
+    });
+  })();
+</script>
+</body>
+</html>

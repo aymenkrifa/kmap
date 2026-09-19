@@ -1,0 +1,35 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      # Report both platforms every time. With fail-fast the macOS leg is
+      # cancelled the moment Linux fails, which hides whether a failure is
+      # platform-specific — exactly the question worth answering when a test
+      # passes locally and fails in CI.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+      # The README tells contributors to run gofmt; CI should be the thing
+      # that makes that true rather than a note nobody enforces.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./...
