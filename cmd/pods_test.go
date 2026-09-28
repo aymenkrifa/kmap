@@ -262,3 +262,51 @@ func TestPodsReportsWhatItCouldNotRead(t *testing.T) {
 		t.Errorf("no note explaining the empty DOCS column:\n%s", s)
 	}
 }
+
+// flakyRunner fails the second `get pods` and cancels the watch on the third.
+type flakyRunner struct {
+	fakeRunner
+	cancel context.CancelFunc
+	gets   int
+}
+
+func (f *flakyRunner) Run(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
+	if strings.Contains(strings.Join(argv, " "), "get pods") {
+		f.gets++
+		switch f.gets {
+		case 2:
+			return errors.New("connection refused")
+		case 3:
+			f.cancel()
+			return ctx.Err()
+		}
+	}
+	return f.fakeRunner.Run(ctx, argv, stdout, stderr)
+}
+
+func TestWatchKeepsGoingAfterAFailedRefresh(t *testing.T) {
+	cfg := testConfig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &flakyRunner{fakeRunner: fakeRunner{out: map[string]string{"get pods": twoPods}}, cancel: cancel}
+
+	var out bytes.Buffer
+	if err := watchPods(ctx, cfg, f, &out, "local", []string{"api"}, nil, nil, 1); err != nil {
+		t.Fatalf("watch ended with %v, want a clean stop on cancel", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "refresh failed") || !strings.Contains(s, "connection refused") {
+		t.Errorf("failed refresh not reported:\n%s", s)
+	}
+	if strings.Count(s, "api-server") < 2 {
+		t.Errorf("last good table not kept under the warning:\n%s", s)
+	}
+}
+
+func TestWatchFailsFastWhenTheFirstFetchFails(t *testing.T) {
+	cfg := testConfig(t)
+	f := &fakeRunner{fail: map[string]error{"get pods": errors.New("forbidden")}}
+	var out bytes.Buffer
+	if err := watchPods(context.Background(), cfg, f, &out, "local", []string{"api"}, nil, nil, 1); err == nil {
+		t.Fatal("watch swallowed a first-fetch failure")
+	}
+}

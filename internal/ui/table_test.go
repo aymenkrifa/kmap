@@ -160,3 +160,12 @@ func TestPipedOutputCarriesNoEscapes(t *testing.T) {
 		}
 	}
 }
+
+func TestRedrawPaintsFromHomeInOneWrite(t *testing.T) {
+	var b bytes.Buffer
+	Redraw(&b, "a\nb\n")
+	// home, overwrite each line to its end, then erase whatever lies below
+	if got, want := b.String(), "\x1b[Ha\x1b[K\nb\x1b[K\n\x1b[J"; got != want {
+		t.Errorf("frame = %q, want %q", got, want)
+	}
+}

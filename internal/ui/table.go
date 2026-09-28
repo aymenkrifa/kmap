@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -107,10 +108,38 @@ func Link(url, text string) string {
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
-// ClearLines emits the escape sequence to move up n lines and clear them, for
-// in-place refresh that preserves scrollback.
-func ClearLines(w io.Writer, n int) {
-	for i := 0; i < n; i++ {
-		fmt.Fprint(w, "\x1b[1A\x1b[2K")
+// Redraw paints frame over the whole screen in one write, so the terminal
+// never shows a half-cleared screen between two frames. It homes the cursor
+// rather than counting lines back up, so anything else that printed in the
+// meantime is painted over instead of shifting the table. Lines are cleared to
+// their end, then anything left below from a longer previous frame is erased.
+// Meant for the screen FullScreen switches to.
+func Redraw(w io.Writer, frame string) {
+	var b strings.Builder
+	b.WriteString("\x1b[H")
+	for _, l := range strings.Split(strings.TrimSuffix(frame, "\n"), "\n") {
+		b.WriteString(l)
+		b.WriteString("\x1b[K\n")
 	}
+	b.WriteString("\x1b[J")
+	io.WriteString(w, b.String())
+}
+
+// FullScreen switches to the terminal's alternate screen, as watch and top do,
+// with auto-wrap off so a line wider than the terminal is clipped instead of
+// spilling onto another row, and the cursor hidden. The returned func puts the
+// normal screen, wrapping and cursor back, leaving scrollback as it was.
+func FullScreen(w io.Writer) (restore func()) {
+	io.WriteString(w, "\x1b[?1049h\x1b[?7l\x1b[?25l")
+	return func() { io.WriteString(w, "\x1b[?25h\x1b[?7h\x1b[?1049l") }
+}
+
+// IsTerminal reports whether w is a terminal, and so can take cursor movement.
+func IsTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
