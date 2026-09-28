@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -322,20 +325,56 @@ func age(t time.Time) string {
 	}
 }
 
+// watchPods refreshes the table until interrupted. On a terminal it draws on
+// the alternate screen: the next frame is fetched while the current one stays
+// up, then swapped in with one write, so the table updates in place rather
+// than blanking for as long as the cluster takes to answer. On exit the last
+// good table is printed to the normal screen, so it stays in scrollback. A
+// failed refresh keeps the last good table under a warning and retries; only
+// a failure on the first fetch, before there is anything to show, ends the
+// watch.
 func watchPods(ctx context.Context, cfg *config.Config, r kube.Runner, w io.Writer,
 	env string, aliases, passthrough, cols []string, interval int) error {
 
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var last string
+	tty := ui.IsTerminal(w)
+	if tty {
+		restore := ui.FullScreen(w)
+		defer func() {
+			restore()
+			fmt.Fprint(w, last)
+		}()
+	}
+
 	for {
 		var buf bytes.Buffer
-		if err := runPods(ctx, cfg, r, &buf, env, aliases, passthrough, cols); err != nil {
+		err := runPods(ctx, cfg, r, &buf, env, aliases, passthrough, cols)
+		switch {
+		case ctx.Err() != nil:
+			return nil
+		case err != nil && last == "":
 			return err
+		case err != nil:
+			buf.Reset()
+			fmt.Fprintf(&buf, "%srefresh failed at %s, retrying in %ds: %v%s\n%s",
+				ui.Yellow, time.Now().Format("15:04:05"), interval, err, ui.Reset, last)
+		default:
+			last = buf.String()
 		}
-		fmt.Fprint(w, buf.String())
+
+		if tty {
+			ui.Redraw(w, buf.String())
+		} else {
+			fmt.Fprintln(w, buf.String()) // a pipe gets each frame in turn
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(time.Duration(interval) * time.Second):
 		}
-		ui.ClearLines(w, strings.Count(buf.String(), "\n"))
 	}
 }

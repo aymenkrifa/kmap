@@ -128,6 +128,11 @@ One table for every alias you asked about, grouped so each namespace costs one
 With `--watch`, a bare trailing number is taken as the interval, so
 `kmap pods staging api -f 5` works. A number that names a real alias still wins.
 
+On a terminal the watch takes over the screen, as `watch` does, and keeps the
+current table up while the next one loads. A failed refresh shows a warning
+above the last good table and retries. Ctrl-C leaves the last table in your
+scrollback.
+
 `-o`/`--output` is dropped with a note: kmap asks for JSON and renders its own
 table, so forwarding yours would send the flag twice.
 
